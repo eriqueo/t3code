@@ -32,6 +32,9 @@ const decodeConsumeRateLimitResetCreditParams = Schema.decodeUnknownEffect(
 const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/rateLimitResetCredit/consume"],
 );
+const decodeThreadResumeResponse = Schema.decodeUnknownEffect(
+  CodexRpc.CLIENT_REQUEST_RESPONSES["thread/resume"],
+);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
   it.effect("maps account usage responses to the upstream token usage schema", () =>
@@ -125,6 +128,49 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.deepEqual(yield* decodeConsumeRateLimitResetCreditResponse({ outcome: "reset" }), {
         outcome: "reset",
       });
+    }),
+  );
+
+  it.effect("decodes completed subagent activity when resuming a thread", () =>
+    Effect.gen(function* () {
+      const response = {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        cwd: "/workspace/repo",
+        model: "gpt-5.6-sol",
+        modelProvider: "openai",
+        sandbox: { type: "readOnly" },
+        thread: {
+          cliVersion: "0.151.0",
+          createdAt: 1_788_201_600,
+          cwd: "/workspace/repo",
+          ephemeral: false,
+          id: "thread-root",
+          modelProvider: "openai",
+          preview: "Delegate a task",
+          sessionId: "session-root",
+          source: "appServer",
+          status: { type: "idle" },
+          turns: [
+            {
+              id: "turn-1",
+              items: [
+                {
+                  agentPath: "/root/researcher",
+                  agentThreadId: "thread-child",
+                  id: "call-1",
+                  kind: "completed",
+                  type: "subAgentActivity",
+                },
+              ],
+              status: "completed",
+            },
+          ],
+          updatedAt: 1_788_201_601,
+        },
+      } as const;
+
+      assert.deepEqual(yield* decodeThreadResumeResponse(response), response);
     }),
   );
 

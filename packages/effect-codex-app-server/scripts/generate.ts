@@ -266,6 +266,30 @@ function normalizeNullableTypes(value: Schema.Json): Schema.Json {
   };
 }
 
+function applyRuntimeCompatibility(definitionName: string, value: Schema.Json): Schema.Json {
+  if (
+    definitionName !== "SubAgentActivityKind" ||
+    Array.isArray(value) ||
+    value === null ||
+    typeof value !== "object"
+  ) {
+    return value;
+  }
+
+  const objectValue = value as { readonly [key: string]: Schema.Json };
+  const enumValues = objectValue.enum;
+  if (!Array.isArray(enumValues) || !enumValues.every((entry) => typeof entry === "string")) {
+    throw new Error("SubAgentActivityKind must be a string enum");
+  }
+
+  // Codex >= b705b6b0 persists successful child completion in thread history, while T3's
+  // broader protocol pin must remain older for compatibility. Remove this backport when
+  // UPSTREAM_REF reaches b705b6b0 or a descendant and regeneration passes protocol tests.
+  return enumValues.includes("completed")
+    ? value
+    : { ...objectValue, enum: [...enumValues, "completed"] };
+}
+
 function stripNullDefaults(value: Schema.Json): Schema.Json {
   if (Array.isArray(value)) {
     return value.map(stripNullDefaults);
@@ -559,7 +583,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
-            definitionSchema,
+            applyRuntimeCompatibility(definitionName, definitionSchema),
             localDefinitionNames,
             file.namespace,
             exportNameByQualifiedName,
