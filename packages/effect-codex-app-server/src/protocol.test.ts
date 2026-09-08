@@ -33,6 +33,9 @@ const decodeConsumeRateLimitResetCreditParams = Schema.decodeUnknownEffect(
 const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/rateLimitResetCredit/consume"],
 );
+const decodeThreadResumeResponse = Schema.decodeUnknownEffect(
+  CodexRpc.CLIENT_REQUEST_RESPONSES["thread/resume"],
+);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
   it.effect("maps account usage responses to the upstream token usage schema", () =>
@@ -126,6 +129,44 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.deepEqual(yield* decodeConsumeRateLimitResetCreditResponse({ outcome: "reset" }), {
         outcome: "reset",
       });
+    }),
+  );
+
+  it.effect("decodes current Codex error categories when resuming a failed thread", () =>
+    Effect.gen(function* () {
+      for (const codexErrorInfo of ["misalignmentPolicyViolation", "rateLimitExceeded"] as const) {
+        const response = {
+          approvalPolicy: "on-request",
+          approvalsReviewer: "auto_review",
+          cwd: "/workspace/repo",
+          model: "gpt-5.6-sol",
+          modelProvider: "openai",
+          sandbox: { type: "readOnly" },
+          thread: {
+            cliVersion: "0.153.4",
+            createdAt: 1_788_806_400,
+            cwd: "/workspace/repo",
+            ephemeral: false,
+            id: "thread-root",
+            modelProvider: "openai",
+            preview: "Resume a failed thread",
+            sessionId: "session-root",
+            source: "appServer",
+            status: { type: "idle" },
+            turns: [
+              {
+                error: { codexErrorInfo, message: "The turn failed." },
+                id: "turn-1",
+                items: [],
+                status: "failed",
+              },
+            ],
+            updatedAt: 1_788_806_401,
+          },
+        } as const;
+
+        assert.deepEqual(yield* decodeThreadResumeResponse(response), response);
+      }
     }),
   );
 

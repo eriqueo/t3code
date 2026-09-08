@@ -194,6 +194,62 @@ const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
   },
 };
 
+function applyRuntimeCompatibility(definitionName: string, definitionSchema: Schema.Json) {
+  const replacement = Codex0150DefinitionSchemas[definitionName];
+  if (replacement !== undefined) {
+    return replacement;
+  }
+  if (
+    definitionName !== "CodexErrorInfo" ||
+    Array.isArray(definitionSchema) ||
+    definitionSchema === null ||
+    typeof definitionSchema !== "object"
+  ) {
+    return definitionSchema;
+  }
+
+  const objectDefinition = definitionSchema as { readonly [key: string]: Schema.Json };
+  const oneOf = objectDefinition.oneOf;
+  if (!Array.isArray(oneOf)) {
+    throw new Error("CodexErrorInfo must be a oneOf schema");
+  }
+
+  const stringVariantIndex = oneOf.findIndex(
+    (variant) =>
+      !Array.isArray(variant) &&
+      variant !== null &&
+      typeof variant === "object" &&
+      variant.type === "string" &&
+      Array.isArray(variant.enum),
+  );
+  const stringVariant = oneOf[stringVariantIndex];
+  if (
+    stringVariantIndex < 0 ||
+    Array.isArray(stringVariant) ||
+    stringVariant === null ||
+    typeof stringVariant !== "object" ||
+    !Array.isArray(stringVariant.enum) ||
+    !stringVariant.enum.every((value: unknown) => typeof value === "string")
+  ) {
+    throw new Error("CodexErrorInfo must contain a string enum variant");
+  }
+
+  // Codex 0.153 can persist these values in failed turn history while T3's broader
+  // protocol pin remains older. Remove this backport once UPSTREAM_REF includes both.
+  const missingValues = ["rateLimitExceeded", "misalignmentPolicyViolation"].filter(
+    (value) => !stringVariant.enum.includes(value),
+  );
+  const compatibleStringVariant = {
+    ...stringVariant,
+    enum: [...stringVariant.enum, ...missingValues],
+  };
+
+  return {
+    ...objectDefinition,
+    oneOf: oneOf.with(stringVariantIndex, compatibleStringVariant),
+  };
+}
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -605,8 +661,10 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     );
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
-      const compatibleDefinitionSchema =
-        Codex0150DefinitionSchemas[definitionName] ?? definitionSchema;
+      const compatibleDefinitionSchema = applyRuntimeCompatibility(
+        definitionName,
+        definitionSchema,
+      );
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
