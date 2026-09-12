@@ -82,6 +82,28 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
   }),
 );
 
+it.effect("decodes context handoff client commands", () =>
+  Effect.gen(function* () {
+    const prepare = yield* decodeClientOrchestrationCommand({
+      type: "thread.handoff.prepare",
+      commandId: "handoff-request",
+      threadId: "thread-1",
+      sourceMessageId: "message-1",
+      createdAt: "2026-09-12T00:00:00.000Z",
+    });
+    assert.strictEqual(prepare.type, "thread.handoff.prepare");
+    const start = yield* decodeClientOrchestrationCommand({
+      type: "thread.handoff.start",
+      commandId: "handoff-start",
+      threadId: "thread-1",
+      requestId: "handoff-request",
+      targetThreadId: "thread-2",
+      createdAt: "2026-09-12T00:00:00.000Z",
+    });
+    assert.strictEqual(start.type, "thread.handoff.start");
+  }),
+);
+
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeTurnDiffInput({

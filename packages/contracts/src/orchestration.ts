@@ -592,6 +592,67 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const THREAD_HANDOFF_ACTIVITY_KINDS = {
+  requested: "context-handoff.requested",
+  ready: "context-handoff.ready",
+  failed: "context-handoff.failed",
+  dismissed: "context-handoff.dismissed",
+  started: "context-handoff.started",
+} as const;
+
+const ThreadHandoffActivityBase = {
+  requestId: CommandId,
+  sourceMessageId: MessageId,
+} as const;
+
+export const ThreadHandoffRequestedActivityPayload = Schema.Struct({
+  ...ThreadHandoffActivityBase,
+  state: Schema.Literal("requested"),
+});
+export type ThreadHandoffRequestedActivityPayload =
+  typeof ThreadHandoffRequestedActivityPayload.Type;
+
+export const ThreadHandoffReadyActivityPayload = Schema.Struct({
+  ...ThreadHandoffActivityBase,
+  state: Schema.Literal("ready"),
+  handoff: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+  elapsedMs: NonNegativeInt,
+  inputCharacters: NonNegativeInt,
+  outputCharacters: NonNegativeInt,
+});
+export type ThreadHandoffReadyActivityPayload = typeof ThreadHandoffReadyActivityPayload.Type;
+
+export const ThreadHandoffFailedActivityPayload = Schema.Struct({
+  ...ThreadHandoffActivityBase,
+  state: Schema.Literal("failed"),
+  code: TrimmedNonEmptyString,
+  detail: TrimmedNonEmptyString.check(Schema.isMaxLength(1_024)),
+});
+export type ThreadHandoffFailedActivityPayload = typeof ThreadHandoffFailedActivityPayload.Type;
+
+export const ThreadHandoffDismissedActivityPayload = Schema.Struct({
+  ...ThreadHandoffActivityBase,
+  state: Schema.Literal("dismissed"),
+});
+export type ThreadHandoffDismissedActivityPayload =
+  typeof ThreadHandoffDismissedActivityPayload.Type;
+
+export const ThreadHandoffStartedActivityPayload = Schema.Struct({
+  ...ThreadHandoffActivityBase,
+  state: Schema.Literal("started"),
+  targetThreadId: ThreadId,
+});
+export type ThreadHandoffStartedActivityPayload = typeof ThreadHandoffStartedActivityPayload.Type;
+
+export const ThreadHandoffActivityPayload = Schema.Union([
+  ThreadHandoffRequestedActivityPayload,
+  ThreadHandoffReadyActivityPayload,
+  ThreadHandoffFailedActivityPayload,
+  ThreadHandoffDismissedActivityPayload,
+  ThreadHandoffStartedActivityPayload,
+]);
+export type ThreadHandoffActivityPayload = typeof ThreadHandoffActivityPayload.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -1186,6 +1247,32 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadHandoffPrepareCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.prepare"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceMessageId: MessageId,
+  retry: Schema.optional(Schema.Literal(true)),
+  createdAt: IsoDateTime,
+});
+
+const ThreadHandoffDismissCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.dismiss"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadHandoffStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: CommandId,
+  targetThreadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -1341,6 +1428,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadPullRequestUnlinkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadHandoffPrepareCommand,
+  ThreadHandoffDismissCommand,
+  ThreadHandoffStartCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1374,6 +1464,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadPullRequestUnlinkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadHandoffPrepareCommand,
+  ThreadHandoffDismissCommand,
+  ThreadHandoffStartCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,

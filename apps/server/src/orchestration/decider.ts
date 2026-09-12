@@ -1,5 +1,7 @@
 import {
   EventId,
+  THREAD_HANDOFF_ACTIVITY_KINDS,
+  ThreadHandoffActivityPayload,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
@@ -51,6 +53,7 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+const isThreadHandoffActivityPayload = Schema.is(ThreadHandoffActivityPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /**
@@ -102,6 +105,27 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
     }
   }
   return requests;
+}
+
+function latestHandoffPayload(
+  thread: Pick<OrchestrationThread, "activities">,
+  sourceMessageId: MessageId,
+) {
+  for (let index = thread.activities.length - 1; index >= 0; index -= 1) {
+    const activity = thread.activities[index];
+    if (!activity || !activity.kind.startsWith("context-handoff.")) continue;
+    if (!isThreadHandoffActivityPayload(activity.payload)) continue;
+    if (activity.payload.sourceMessageId === sourceMessageId) return activity.payload;
+  }
+  return null;
+}
+
+function latestSettledMessageId(thread: Pick<OrchestrationThread, "messages">) {
+  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+    const message = thread.messages[index];
+    if (message && !message.streaming) return message.id;
+  }
+  return null;
 }
 
 /** Apply the shared shell-level rule to the detailed command read model. */
@@ -1267,6 +1291,172 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+    }
+
+    case "thread.handoff.prepare": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (latestSettledMessageId(thread) !== command.sourceMessageId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The conversation changed before its handoff could be prepared.",
+        });
+      }
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.latestTurn?.state === "running" ||
+        openRequests(thread).size > 0
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A handoff can only be prepared while the thread is idle and unblocked.",
+        });
+      }
+      const previous = latestHandoffPayload(thread, command.sourceMessageId);
+      if (previous !== null && !(previous.state === "failed" && command.retry === true)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This conversation revision already has a handoff decision.",
+        });
+      }
+      return yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.activity.append",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+          activity: {
+            id: EventId.make(`context-handoff:${command.commandId}`),
+            kind: THREAD_HANDOFF_ACTIVITY_KINDS.requested,
+            summary: "DX2 is preparing a compact handoff",
+            tone: "info",
+            turnId: null,
+            createdAt: command.createdAt,
+            payload: {
+              state: "requested",
+              requestId: command.commandId,
+              sourceMessageId: command.sourceMessageId,
+            },
+          },
+        },
+      });
+    }
+
+    case "thread.handoff.dismiss": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (latestSettledMessageId(thread) !== command.sourceMessageId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The conversation changed before its handoff could be dismissed.",
+        });
+      }
+      const previous = latestHandoffPayload(thread, command.sourceMessageId);
+      if (previous === null || !["requested", "ready", "failed"].includes(previous.state)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "There is no active handoff to dismiss.",
+        });
+      }
+      return yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.activity.append",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+          activity: {
+            id: EventId.make(`context-handoff-dismissed:${command.commandId}`),
+            kind: THREAD_HANDOFF_ACTIVITY_KINDS.dismissed,
+            summary: "Continuing with the full conversation",
+            tone: "info",
+            turnId: null,
+            createdAt: command.createdAt,
+            payload: {
+              state: "dismissed",
+              requestId: previous.requestId,
+              sourceMessageId: command.sourceMessageId,
+            },
+          },
+        },
+      });
+    }
+
+    case "thread.handoff.start": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireThreadAbsent({ readModel, command, threadId: command.targetThreadId });
+      const sourceMessageId = latestSettledMessageId(thread);
+      const ready = sourceMessageId === null ? null : latestHandoffPayload(thread, sourceMessageId);
+      if (ready?.state !== "ready" || ready.requestId !== command.requestId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The ready handoff is stale or no longer available.",
+        });
+      }
+      const prompt =
+        "Continue from this compact operational handoff. Verify workspace and code claims before acting.\n\n" +
+        ready.handoff;
+      return yield* decideCommandSequence({
+        readModel,
+        commands: [
+          {
+            type: "thread.activity.append",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            createdAt: command.createdAt,
+            activity: {
+              id: EventId.make(`context-handoff-started:${command.commandId}`),
+              kind: THREAD_HANDOFF_ACTIVITY_KINDS.started,
+              summary: "Continued in a fresh conversation",
+              tone: "info",
+              turnId: null,
+              createdAt: command.createdAt,
+              payload: {
+                state: "started",
+                requestId: ready.requestId,
+                sourceMessageId: ready.sourceMessageId,
+                targetThreadId: command.targetThreadId,
+              },
+            },
+          },
+          { type: "thread.archive", commandId: command.commandId, threadId: command.threadId },
+          {
+            type: "thread.create",
+            commandId: command.commandId,
+            threadId: command.targetThreadId,
+            projectId: thread.projectId,
+            title: `${thread.title} · continued`,
+            modelSelection: thread.modelSelection,
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            branch: thread.branch,
+            worktreePath: thread.worktreePath,
+            createdAt: command.createdAt,
+          },
+          {
+            type: "thread.turn.start",
+            commandId: command.commandId,
+            threadId: command.targetThreadId,
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            createdAt: command.createdAt,
+            message: {
+              messageId: MessageId.make(`context-handoff:${command.commandId}`),
+              role: "user",
+              text: prompt,
+              attachments: [],
+            },
+          },
+        ],
+      });
     }
 
     case "thread.turn.start": {
