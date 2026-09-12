@@ -39,9 +39,17 @@ export interface DrainableWorker<A> {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options?: { readonly capacity?: number },
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+    // Bounded queues use backpressure at capacity: producers wait instead of
+    // silently dropping lifecycle work or allowing unbounded memory growth.
+    const queue = yield* Effect.acquireRelease(
+      options?.capacity === undefined
+        ? TxQueue.unbounded<A>()
+        : TxQueue.bounded<A>(options.capacity),
+      TxQueue.shutdown,
+    );
     const outstanding = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(

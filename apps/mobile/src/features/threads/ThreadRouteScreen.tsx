@@ -22,7 +22,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
@@ -76,6 +76,12 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import {
+  deriveThreadHandoffState,
+  latestThreadMessageId,
+  shouldPrepareThreadHandoff,
+} from "@t3tools/shared/contextHandoff";
+import { uuidv4 } from "../../lib/uuid";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAdaptiveWorkspaceLayout,
@@ -107,6 +113,15 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   }
 
   return value ?? null;
+}
+
+function latestUsedContextTokens(
+  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
+): number | null {
+  const activity = activities.findLast((entry) => entry.kind === "context-window.updated");
+  if (typeof activity?.payload !== "object" || activity.payload === null) return null;
+  const usedTokens = (activity.payload as { readonly usedTokens?: unknown }).usedTokens;
+  return typeof usedTokens === "number" && Number.isFinite(usedTokens) ? usedTokens : null;
 }
 
 function OpeningThreadLoadingScreen() {
@@ -234,6 +249,15 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const prepareThreadHandoff = useAtomCommand(threadEnvironment.prepareHandoff, {
+    reportFailure: false,
+  });
+  const dismissThreadHandoff = useAtomCommand(threadEnvironment.dismissHandoff, {
+    reportFailure: false,
+  });
+  const startThreadHandoff = useAtomCommand(threadEnvironment.startHandoff, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -303,6 +327,186 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const handoffSourceMessageId = selectedThreadDetail
+    ? latestThreadMessageId({ messages: selectedThreadDetail.messages })
+    : null;
+  const handoffState = useMemo(
+    () =>
+      selectedThreadDetail && handoffSourceMessageId
+        ? deriveThreadHandoffState(selectedThreadDetail.activities, handoffSourceMessageId)
+        : ({ state: "none" } as const),
+    [handoffSourceMessageId, selectedThreadDetail],
+  );
+  const handoffSupported =
+    routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadContextHandoffs === true;
+  const handoffRequestedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!handoffSupported || !selectedThread || !selectedThreadDetail || !handoffSourceMessageId)
+      return;
+    const requestKey = `${selectedThreadDetail.id}:${handoffSourceMessageId}`;
+    const latestMessageAt = selectedThreadDetail.messages.findLast(
+      (message) => !message.streaming,
+    )?.updatedAt;
+    if (
+      handoffRequestedRef.current === requestKey ||
+      !shouldPrepareThreadHandoff({
+        nowMs: Date.now(),
+        latestMessageAt: latestMessageAt ?? null,
+        usedTokens: latestUsedContextTokens(selectedThreadDetail.activities),
+        sessionStatus: selectedThreadDetail.session?.status ?? null,
+        latestTurnState: selectedThreadDetail.latestTurn?.state ?? null,
+        hasPendingRequest:
+          requests.activePendingApproval !== null || requests.activePendingUserInput !== null,
+        handoffState: handoffState.state,
+      })
+    )
+      return;
+    handoffRequestedRef.current = requestKey;
+    void prepareThreadHandoff({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThreadDetail.id, sourceMessageId: handoffSourceMessageId },
+    }).then((result) => {
+      if (result._tag === "Failure") handoffRequestedRef.current = null;
+    });
+  }, [
+    handoffSourceMessageId,
+    handoffState.state,
+    handoffSupported,
+    prepareThreadHandoff,
+    requests.activePendingApproval,
+    requests.activePendingUserInput,
+    selectedThreadDetail,
+    selectedThread,
+  ]);
+  const [handoffActionBusy, setHandoffActionBusy] = useState(false);
+  const keepFullHistory = useCallback(async () => {
+    if (!selectedThread || !selectedThreadDetail || !handoffSourceMessageId || handoffActionBusy)
+      return;
+    setHandoffActionBusy(true);
+    const result = await dismissThreadHandoff({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThreadDetail.id, sourceMessageId: handoffSourceMessageId },
+    });
+    setHandoffActionBusy(false);
+    if (result._tag === "Failure")
+      Alert.alert("Could not keep the full conversation", "Try again.");
+  }, [
+    dismissThreadHandoff,
+    handoffActionBusy,
+    handoffSourceMessageId,
+    selectedThread,
+    selectedThreadDetail,
+  ]);
+  const startFresh = useCallback(async () => {
+    if (
+      !selectedThread ||
+      !selectedThreadDetail ||
+      handoffState.state !== "ready" ||
+      handoffActionBusy
+    )
+      return;
+    setHandoffActionBusy(true);
+    const targetThreadId = ThreadId.make(uuidv4());
+    const result = await startThreadHandoff({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThreadDetail.id,
+        requestId: handoffState.payload.requestId,
+        targetThreadId,
+      },
+    });
+    setHandoffActionBusy(false);
+    if (result._tag === "Failure") {
+      Alert.alert("Could not start a fresh conversation", "Try again.");
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(targetThreadId),
+      }),
+    );
+  }, [
+    handoffActionBusy,
+    handoffState,
+    navigation,
+    selectedThread,
+    selectedThreadDetail,
+    startThreadHandoff,
+  ]);
+  const contextHandoffCard = useMemo(() => {
+    if (!handoffSupported || ["none", "dismissed", "started"].includes(handoffState.state)) {
+      return null;
+    }
+    const failed = handoffState.state === "failed";
+    const ready = handoffState.state === "ready";
+    return (
+      <View className="rounded-2xl border border-border bg-card px-4 py-3">
+        <Text className="text-sm font-semibold text-foreground">
+          {failed
+            ? "DX2 could not prepare the handoff"
+            : ready
+              ? "Fresh-conversation handoff ready"
+              : "DX2 is preparing a compact handoff"}
+        </Text>
+        <Text className="mt-1 text-xs leading-5 text-muted-foreground">
+          {failed
+            ? handoffState.payload.detail
+            : ready
+              ? "Start fresh without replaying this full thread to the frontier model."
+              : "You can keep working here while it runs."}
+        </Text>
+        <View className="mt-2 flex-row justify-end gap-2">
+          <Pressable
+            accessibilityRole="button"
+            disabled={handoffActionBusy}
+            className="min-h-11 justify-center rounded-xl px-3 active:bg-muted"
+            onPress={() => void keepFullHistory()}
+          >
+            <Text className="text-sm font-medium text-muted-foreground">Keep history</Text>
+          </Pressable>
+          {ready ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={handoffActionBusy}
+              className="min-h-11 justify-center rounded-xl bg-primary px-4 active:opacity-80"
+              onPress={() => void startFresh()}
+            >
+              <Text className="text-sm font-semibold text-primary-foreground">Start fresh</Text>
+            </Pressable>
+          ) : failed ? (
+            <Pressable
+              accessibilityRole="button"
+              className="min-h-11 justify-center rounded-xl px-3 active:bg-muted"
+              onPress={() => {
+                if (!selectedThread || !selectedThreadDetail || !handoffSourceMessageId) return;
+                void prepareThreadHandoff({
+                  environmentId: selectedThread.environmentId,
+                  input: {
+                    threadId: selectedThreadDetail.id,
+                    sourceMessageId: handoffSourceMessageId,
+                    retry: true,
+                  },
+                });
+              }}
+            >
+              <Text className="text-sm font-semibold text-primary">Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }, [
+    handoffActionBusy,
+    handoffSourceMessageId,
+    handoffState,
+    handoffSupported,
+    keepFullHistory,
+    prepareThreadHandoff,
+    selectedThread,
+    selectedThreadDetail,
+    startFresh,
+  ]);
   const selectedThreadWithDraftSettings = useMemo(
     () =>
       selectedThread
@@ -866,6 +1070,7 @@ function ThreadRouteContent(
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           isCompacting={composer.isCompacting}
+          contextHandoffCard={contextHandoffCard}
           creationState={creationState}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}

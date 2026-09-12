@@ -57,6 +57,9 @@ export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert
   readonly restoreFiles?: boolean;
 };
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type PrepareThreadHandoffInput = CommandInput<"thread.handoff.prepare">;
+export type DismissThreadHandoffInput = CommandInput<"thread.handoff.dismiss">;
+export type StartThreadHandoffInput = CommandInput<"thread.handoff.start">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -304,6 +307,42 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "thread.turn.start",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const prepareThreadHandoff: (input: PrepareThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.prepareThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.prepare",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const dismissThreadHandoff: (input: DismissThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.dismissThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.dismiss",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const startThreadHandoff: (input: StartThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.startThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.start",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

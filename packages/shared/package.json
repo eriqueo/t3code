@@ -311,6 +311,10 @@
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
     },
+    "./contextHandoff": {
+      "types": "./src/contextHandoff.ts",
+      "import": "./src/contextHandoff.ts"
+    },
     "./nodeSqliteClient": {
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"

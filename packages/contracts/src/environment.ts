@@ -129,6 +129,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
+  /** Server can prepare a bounded external context handoff and continue it in
+      a fresh thread without resuming the source provider session. */
+  threadContextHandoffs: Schema.optionalKey(Schema.Boolean),
   /** Server supports legacy linkedPullRequest updates through thread.meta.update.
       Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
