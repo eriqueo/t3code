@@ -2,6 +2,9 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  THREAD_HANDOFF_ACTIVITY_KINDS,
+  ThreadHandoffActivityPayload,
+  ThreadHandoffRequestedActivityPayload,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -29,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Result from "effect/Result";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -58,10 +62,14 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import { prepareContextHandoff } from "../contextHandoffWorker.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const isHandoffRequestedPayload = Schema.is(ThreadHandoffRequestedActivityPayload);
+const isHandoffActivityPayload = Schema.is(ThreadHandoffActivityPayload);
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -74,7 +82,8 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
-      | "thread.settled";
+      | "thread.settled"
+      | "thread.activity-appended";
   }
 >;
 
@@ -1834,6 +1843,133 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const appendHandoffActivity = Effect.fn("appendHandoffActivity")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+    readonly kind:
+      | typeof THREAD_HANDOFF_ACTIVITY_KINDS.ready
+      | typeof THREAD_HANDOFF_ACTIVITY_KINDS.failed;
+    readonly summary: string;
+    readonly tone: "info" | "error";
+    readonly payload: unknown;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: yield* serverCommandId(input.kind),
+      threadId: input.threadId,
+      createdAt: input.createdAt,
+      activity: {
+        id: yield* serverEventId(),
+        kind: input.kind,
+        summary: input.summary,
+        tone: input.tone,
+        turnId: null,
+        createdAt: input.createdAt,
+        payload: input.payload,
+      },
+    });
+  });
+
+  const processHandoffRequested = Effect.fn("processHandoffRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.activity-appended" }>,
+  ) {
+    const request = event.payload.activity.payload;
+    if (
+      event.payload.activity.kind !== THREAD_HANDOFF_ACTIVITY_KINDS.requested ||
+      !isHandoffRequestedPayload(request)
+    ) {
+      return;
+    }
+    const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(
+      event.payload.threadId,
+      { activityKinds: Object.values(THREAD_HANDOFF_ACTIVITY_KINDS) },
+    );
+    if (Option.isNone(threadOption)) return;
+    const thread = threadOption.value;
+    const latestMessage = thread.messages.findLast((message) => !message.streaming);
+    const latestState = thread.activities
+      .map((activity) => activity.payload)
+      .findLast(isHandoffActivityPayload);
+    if (
+      latestMessage?.id !== request.sourceMessageId ||
+      latestState?.state !== "requested" ||
+      latestState.requestId !== request.requestId
+    ) {
+      return;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    const cwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: project ? [project] : [],
+    });
+    if (!cwd) {
+      const completedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* appendHandoffActivity({
+        threadId: thread.id,
+        createdAt: completedAt,
+        kind: THREAD_HANDOFF_ACTIVITY_KINDS.failed,
+        summary: "DX2 could not prepare the handoff",
+        tone: "error",
+        payload: {
+          state: "failed",
+          requestId: request.requestId,
+          sourceMessageId: request.sourceMessageId,
+          code: "workspace_missing",
+          detail: "The thread has no available workspace.",
+        },
+      });
+      return;
+    }
+    const result = yield* Effect.result(
+      prepareContextHandoff({ cwd, title: thread.title, messages: thread.messages }),
+    );
+    const completedAt = DateTime.formatIso(yield* DateTime.now);
+    const currentThread = yield* projectionSnapshotQuery.getThreadDetailById(thread.id, {
+      activityKinds: Object.values(THREAD_HANDOFF_ACTIVITY_KINDS),
+    });
+    if (Option.isNone(currentThread)) return;
+    const currentMessage = currentThread.value.messages.findLast((message) => !message.streaming);
+    const currentHandoff = currentThread.value.activities
+      .map((activity) => activity.payload)
+      .findLast(isHandoffActivityPayload);
+    if (
+      currentMessage?.id !== request.sourceMessageId ||
+      currentHandoff?.state !== "requested" ||
+      currentHandoff.requestId !== request.requestId
+    )
+      return;
+    if (Result.isFailure(result)) {
+      yield* appendHandoffActivity({
+        threadId: thread.id,
+        createdAt: completedAt,
+        kind: THREAD_HANDOFF_ACTIVITY_KINDS.failed,
+        summary: "DX2 could not prepare the handoff",
+        tone: "error",
+        payload: {
+          state: "failed",
+          requestId: request.requestId,
+          sourceMessageId: request.sourceMessageId,
+          code: result.failure.code,
+          detail: result.failure.detail,
+        },
+      });
+      return;
+    }
+    yield* appendHandoffActivity({
+      threadId: thread.id,
+      createdAt: completedAt,
+      kind: THREAD_HANDOFF_ACTIVITY_KINDS.ready,
+      summary: "Compact handoff ready",
+      tone: "info",
+      payload: {
+        state: "ready",
+        requestId: request.requestId,
+        sourceMessageId: request.sourceMessageId,
+        ...result.success,
+      },
+    });
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1920,6 +2056,20 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const handoffWorker = yield* makeDrainableWorker(
+    (event: Extract<ProviderIntentEvent, { type: "thread.activity-appended" }>) =>
+      processHandoffRequested(event).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("DX2 handoff worker failed to process event", {
+                threadId: event.payload.threadId,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+    { capacity: 16 },
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
@@ -1934,6 +2084,12 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (
+        event.type === "thread.activity-appended" &&
+        event.payload.activity.kind === THREAD_HANDOFF_ACTIVITY_KINDS.requested
+      ) {
+        return yield* handoffWorker.enqueue(event);
+      }
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
@@ -1982,9 +2138,12 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* handoffWorker.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProcessRunner.layer),
+);

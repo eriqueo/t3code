@@ -6,6 +6,38 @@ import * as Effect from "effect/Effect";
 import { makeDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
+  it.live("applies backpressure when a bounded worker reaches capacity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const thirdEnqueued = yield* Deferred.make<void>();
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            item === "first"
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.orDie,
+                  Effect.andThen(Deferred.await(releaseFirst)),
+                )
+              : Effect.void,
+          { capacity: 1 },
+        );
+
+        yield* worker.enqueue("first");
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue("second");
+        yield* Effect.forkChild(
+          worker
+            .enqueue("third")
+            .pipe(Effect.andThen(Deferred.succeed(thirdEnqueued, undefined)), Effect.orDie),
+        );
+        expect(yield* Deferred.isDone(thirdEnqueued)).toBe(false);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(thirdEnqueued);
+      }),
+    ),
+  );
+
   it.live("waits for work enqueued during active processing before draining", () =>
     Effect.scoped(
       Effect.gen(function* () {

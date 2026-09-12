@@ -71,6 +71,11 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { truncate } from "@t3tools/shared/String";
+import {
+  deriveThreadHandoffState,
+  latestThreadMessageId,
+  shouldPrepareThreadHandoff,
+} from "@t3tools/shared/contextHandoff";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   getTerminalLabel,
@@ -1467,6 +1472,15 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const prepareThreadHandoff = useAtomCommand(threadEnvironment.prepareHandoff, {
+    reportFailure: false,
+  });
+  const dismissThreadHandoff = useAtomCommand(threadEnvironment.dismissHandoff, {
+    reportFailure: false,
+  });
+  const startThreadHandoff = useAtomCommand(threadEnvironment.startHandoff, {
+    reportFailure: false,
+  });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -2368,6 +2382,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsThreadContextHandoffs =
+    serverConfig?.environment.capabilities.threadContextHandoffs === true;
   const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments =
@@ -5978,6 +5994,191 @@ export default function ChatView(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
+  const handoffSourceMessageId = activeThread
+    ? latestThreadMessageId({ messages: activeThread.messages })
+    : null;
+  const threadHandoffState = useMemo(
+    () =>
+      activeThread && handoffSourceMessageId
+        ? deriveThreadHandoffState(activeThread.activities, handoffSourceMessageId)
+        : ({ state: "none" } as const),
+    [activeThread, handoffSourceMessageId],
+  );
+  const requestedHandoffKeysRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (
+      !supportsThreadContextHandoffs ||
+      !activeThread ||
+      !activeContextWindow ||
+      !handoffSourceMessageId
+    )
+      return;
+    const key = `${activeThread.id}:${handoffSourceMessageId}`;
+    const latestMessageAt = activeThread.messages.findLast(
+      (message) => !message.streaming,
+    )?.updatedAt;
+    if (
+      requestedHandoffKeysRef.current.has(key) ||
+      !shouldPrepareThreadHandoff({
+        nowMs: Date.parse(`${nowMinute}:00.000Z`),
+        latestMessageAt: latestMessageAt ?? null,
+        usedTokens: activeContextWindow.usedTokens,
+        sessionStatus: activeThread.session?.status ?? null,
+        latestTurnState: activeThread.latestTurn?.state ?? null,
+        hasPendingRequest: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
+        handoffState: threadHandoffState.state,
+      })
+    )
+      return;
+    requestedHandoffKeysRef.current.add(key);
+    void prepareThreadHandoff({
+      environmentId,
+      input: { threadId: activeThread.id, sourceMessageId: handoffSourceMessageId },
+    }).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        requestedHandoffKeysRef.current.delete(key);
+        toastManager.add({ type: "error", title: "Could not request a DX2 handoff" });
+      }
+    });
+  }, [
+    activeContextWindow,
+    activeThread,
+    environmentId,
+    handoffSourceMessageId,
+    nowMinute,
+    pendingApprovals.length,
+    pendingUserInputs.length,
+    prepareThreadHandoff,
+    supportsThreadContextHandoffs,
+    threadHandoffState.state,
+  ]);
+  const [handoffActionBusy, setHandoffActionBusy] = useState(false);
+  const continueWithFullConversation = useCallback(async () => {
+    if (!activeThread || !handoffSourceMessageId || handoffActionBusy) return;
+    setHandoffActionBusy(true);
+    const result = await dismissThreadHandoff({
+      environmentId,
+      input: { threadId: activeThread.id, sourceMessageId: handoffSourceMessageId },
+    });
+    setHandoffActionBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: "Could not dismiss the handoff" });
+    }
+  }, [
+    activeThread,
+    dismissThreadHandoff,
+    environmentId,
+    handoffActionBusy,
+    handoffSourceMessageId,
+  ]);
+  const continueInFreshConversation = useCallback(async () => {
+    if (!activeThread || threadHandoffState.state !== "ready" || handoffActionBusy) return;
+    setHandoffActionBusy(true);
+    const targetThreadId = newThreadId();
+    const result = await startThreadHandoff({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        requestId: threadHandoffState.payload.requestId,
+        targetThreadId,
+      },
+    });
+    if (result._tag === "Success") {
+      await settlePromise(() =>
+        navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: targetThreadId },
+        }),
+      );
+    } else if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: "Could not start the fresh conversation" });
+    }
+    setHandoffActionBusy(false);
+  }, [
+    activeThread,
+    environmentId,
+    handoffActionBusy,
+    navigate,
+    startThreadHandoff,
+    threadHandoffState,
+  ]);
+  const contextHandoffBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (
+      !supportsThreadContextHandoffs ||
+      ["none", "dismissed", "started"].includes(threadHandoffState.state)
+    )
+      return null;
+    if (threadHandoffState.state === "requested") {
+      return {
+        id: `context-handoff:${threadHandoffState.payload.requestId}`,
+        variant: "info",
+        icon: <Minimize2Icon />,
+        title: "DX2 is preparing a fresh-conversation handoff",
+        description: "You can keep working here while it runs",
+        dismissLabel: "Keep full history",
+        onDismiss: () => void continueWithFullConversation(),
+      };
+    }
+    if (threadHandoffState.state === "failed") {
+      return {
+        id: `context-handoff:${threadHandoffState.payload.requestId}`,
+        variant: "error",
+        icon: <Minimize2Icon />,
+        title: "DX2 could not prepare the handoff",
+        description: threadHandoffState.payload.detail,
+        actions: (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              if (!activeThread || !handoffSourceMessageId) return;
+              void prepareThreadHandoff({
+                environmentId,
+                input: {
+                  threadId: activeThread.id,
+                  sourceMessageId: handoffSourceMessageId,
+                  retry: true,
+                },
+              });
+            }}
+          >
+            Retry
+          </Button>
+        ),
+        dismissLabel: "Keep full history",
+        onDismiss: () => void continueWithFullConversation(),
+      };
+    }
+    if (threadHandoffState.state !== "ready") return null;
+    return {
+      id: `context-handoff:${threadHandoffState.payload.requestId}`,
+      variant: "info",
+      icon: <Minimize2Icon />,
+      title: "Fresh-conversation handoff ready",
+      description: "Start with compact operational memory instead of replaying this full thread",
+      actions: (
+        <Button
+          size="xs"
+          disabled={handoffActionBusy}
+          onClick={() => void continueInFreshConversation()}
+        >
+          Start fresh
+        </Button>
+      ),
+      dismissLabel: "Keep full history",
+      onDismiss: () => void continueWithFullConversation(),
+    };
+  }, [
+    activeThread,
+    continueInFreshConversation,
+    continueWithFullConversation,
+    environmentId,
+    handoffActionBusy,
+    handoffSourceMessageId,
+    prepareThreadHandoff,
+    supportsThreadContextHandoffs,
+    threadHandoffState,
+  ]);
   // Session-scoped dismissals, one key per (thread, snapshot). A set rather
   // than a single slot so dismissing the banner on one thread does not
   // resurface it on another thread dismissed earlier.
@@ -6106,8 +6307,11 @@ export default function ChatView(props: ChatViewProps) {
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const contextHandoffItems = contextHandoffBannerItem === null ? [] : [contextHandoffBannerItem];
     const resumeCompactionItems =
-      resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
+      contextHandoffBannerItem !== null || resumeCompactionBannerItem === null
+        ? []
+        : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
@@ -6118,6 +6322,7 @@ export default function ChatView(props: ChatViewProps) {
         ...usageLimitsItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
+        ...contextHandoffItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
@@ -6128,6 +6333,7 @@ export default function ChatView(props: ChatViewProps) {
       ...usageLimitsItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
+      ...contextHandoffItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
       {
@@ -6173,6 +6379,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    contextHandoffBannerItem,
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
