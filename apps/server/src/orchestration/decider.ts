@@ -23,6 +23,7 @@ import {
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { latestThreadUserMessageId } from "@t3tools/shared/contextHandoff";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -116,14 +117,6 @@ function latestHandoffPayload(
     if (!activity || !activity.kind.startsWith("context-handoff.")) continue;
     if (!isThreadHandoffActivityPayload(activity.payload)) continue;
     if (activity.payload.sourceMessageId === sourceMessageId) return activity.payload;
-  }
-  return null;
-}
-
-function latestSettledMessageId(thread: Pick<OrchestrationThread, "messages">) {
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    const message = thread.messages[index];
-    if (message && !message.streaming) return message.id;
   }
   return null;
 }
@@ -1299,7 +1292,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      if (latestSettledMessageId(thread) !== command.sourceMessageId) {
+      if (latestThreadUserMessageId(thread) !== command.sourceMessageId) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "The conversation changed before its handoff could be prepared.",
@@ -1349,7 +1342,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     case "thread.handoff.dismiss": {
       const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
-      if (latestSettledMessageId(thread) !== command.sourceMessageId) {
+      if (latestThreadUserMessageId(thread) !== command.sourceMessageId) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "The conversation changed before its handoff could be dismissed.",
@@ -1393,7 +1386,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       yield* requireThreadAbsent({ readModel, command, threadId: command.targetThreadId });
-      const sourceMessageId = latestSettledMessageId(thread);
+      const sourceMessageId = latestThreadUserMessageId(thread);
       const ready = sourceMessageId === null ? null : latestHandoffPayload(thread, sourceMessageId);
       if (ready?.state !== "ready" || ready.requestId !== command.requestId) {
         return yield* new OrchestrationCommandInvariantError({

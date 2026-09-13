@@ -26,15 +26,16 @@ export type ThreadHandoffState =
 const isThreadHandoffActivityPayload = Schema.is(ThreadHandoffActivityPayload);
 const handoffKinds = new Set<string>(Object.values(THREAD_HANDOFF_ACTIVITY_KINDS));
 
-export function latestThreadMessageId(input: {
+export function latestThreadUserMessageId(input: {
   readonly messages: ReadonlyArray<{
     readonly id: MessageId;
+    readonly role: "user" | "assistant" | "system";
     readonly streaming: boolean;
   }>;
 }): MessageId | null {
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
     const message = input.messages[index];
-    if (message && !message.streaming) return message.id;
+    if (message?.role === "user" && !message.streaming) return message.id;
   }
   return null;
 }
