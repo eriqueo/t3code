@@ -162,6 +162,10 @@ it.layer(NodeServices.layer)("context handoff decider", (it) => {
       const message = events.find((event) => event.type === "thread.message-sent");
       expect(message?.payload.text).toContain("# Operational handoff");
       expect(message?.aggregateId).toBe(ThreadId.make("thread-2"));
+      expect(events.filter((event) => event.type === "thread.message-sent")).toHaveLength(1);
+      expect(message?.payload.text).not.toContain("Please finish the current task");
+      expect(message?.payload.text).not.toContain("Current state");
+      expect(message?.payload.text.endsWith(ready.payload.handoff)).toBe(true);
     }),
   );
 

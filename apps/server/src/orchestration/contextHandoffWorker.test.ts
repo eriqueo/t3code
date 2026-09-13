@@ -51,6 +51,7 @@ it.effect("runs the read-only DX2 adapter with a bounded contract", () =>
       ),
     );
     assert.strictEqual(invocation?.command, "t3-dx2-handoff");
+    assert.deepEqual(invocation?.args, ["--max-result-characters", "16384"]);
     assert.strictEqual(invocation?.cwd, "/workspace");
     assert.match(invocation?.stdin ?? "", /## Settled decisions/);
     assert.strictEqual(result.outputCharacters, result.handoff.length);

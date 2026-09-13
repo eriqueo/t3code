@@ -80,7 +80,7 @@ export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function
   const output = yield* runner
     .run({
       command: "t3-dx2-handoff",
-      args: [],
+      args: ["--max-result-characters", String(MAX_OUTPUT_CHARACTERS)],
       cwd: input.cwd,
       stdin: prompt,
       timeout: WORKER_TIMEOUT,
