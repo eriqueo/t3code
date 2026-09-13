@@ -350,6 +350,7 @@ function ThreadRouteContent(
     if (
       handoffRequestedRef.current === requestKey ||
       !shouldPrepareThreadHandoff({
+        snapshotCurrent: selectedThreadDetailState.status === "live",
         nowMs: Date.now(),
         latestMessageAt: latestMessageAt ?? null,
         usedTokens: latestUsedContextTokens(selectedThreadDetail.activities),

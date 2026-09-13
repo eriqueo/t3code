@@ -55,6 +55,7 @@ export function deriveThreadHandoffState(
 }
 
 export function shouldPrepareThreadHandoff(input: {
+  readonly snapshotCurrent: boolean;
   readonly nowMs: number;
   readonly latestMessageAt: string | null;
   readonly usedTokens: number | null;
@@ -63,6 +64,7 @@ export function shouldPrepareThreadHandoff(input: {
   readonly hasPendingRequest: boolean;
   readonly handoffState: ThreadHandoffState["state"];
 }): boolean {
+  if (!input.snapshotCurrent) return false;
   if (input.handoffState !== "none") return false;
   if (input.hasPendingRequest) return false;
   if (input.sessionStatus === "starting" || input.sessionStatus === "running") return false;

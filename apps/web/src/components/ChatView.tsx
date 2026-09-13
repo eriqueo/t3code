@@ -6025,6 +6025,7 @@ export default function ChatView(props: ChatViewProps) {
     if (
       requestedHandoffKeysRef.current.has(key) ||
       !shouldPrepareThreadHandoff({
+        snapshotCurrent: threadSyncPhase === null,
         nowMs: Date.parse(`${nowMinute}:00.000Z`),
         latestMessageAt: latestMessageAt ?? null,
         usedTokens: activeContextWindow.usedTokens,

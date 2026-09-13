@@ -13,6 +13,7 @@ describe("context handoff policy", () => {
   it("offers one handoff for an expensive thread after an overnight pause", () => {
     expect(
       shouldPrepareThreadHandoff({
+        snapshotCurrent: true,
         nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
         latestMessageAt: "2026-09-12T07:59:59.999Z",
         usedTokens: 100_000,
@@ -24,6 +25,21 @@ describe("context handoff policy", () => {
     ).toBe(true);
   });
 
+  it("waits for the thread snapshot to synchronize before requesting a handoff", () => {
+    expect(
+      shouldPrepareThreadHandoff({
+        nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
+        latestMessageAt: "2026-09-12T07:59:59.999Z",
+        usedTokens: 100_000,
+        sessionStatus: "idle",
+        latestTurnState: "completed",
+        hasPendingRequest: false,
+        handoffState: "none",
+        snapshotCurrent: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     { usedTokens: 99_999, latestMessageAt: "2026-09-12T07:00:00.000Z", handoffState: "none" },
     { usedTokens: 100_000, latestMessageAt: "2026-09-12T08:00:00.001Z", handoffState: "none" },
@@ -31,6 +47,7 @@ describe("context handoff policy", () => {
   ] as const)("does not repeat or prepare below a threshold (%o)", (sample) => {
     expect(
       shouldPrepareThreadHandoff({
+        snapshotCurrent: true,
         nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
         latestMessageAt: sample.latestMessageAt,
         usedTokens: sample.usedTokens,
