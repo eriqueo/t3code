@@ -4,6 +4,7 @@ import { CommandId, EventId, MessageId } from "@t3tools/contracts";
 import {
   deriveThreadHandoffState,
   latestThreadUserMessageId,
+  threadHandoffSourceMessageId,
   shouldPrepareThreadHandoff,
 } from "./contextHandoff.ts";
 
@@ -66,10 +67,18 @@ describe("context handoff policy", () => {
           { id: MessageId.make("message-1"), role: "user", streaming: false },
           { id: SOURCE_MESSAGE_ID, role: "user", streaming: false },
           { id: MessageId.make("assistant-final"), role: "assistant", streaming: false },
+          { id: MessageId.make("import:codex:newer"), role: "user", streaming: false },
           { id: MessageId.make("message-streaming"), role: "user", streaming: true },
         ],
       }),
     ).toBe(SOURCE_MESSAGE_ID);
+  });
+
+  it("uses the authoritative shell revision for client handoffs", () => {
+    expect(threadHandoffSourceMessageId({ latestUserMessageId: SOURCE_MESSAGE_ID })).toBe(
+      SOURCE_MESSAGE_ID,
+    );
+    expect(threadHandoffSourceMessageId({})).toBeNull();
   });
 
   it("selects the latest terminal activity for the current source revision", () => {

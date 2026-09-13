@@ -579,9 +579,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [latestUserMessageAt, hasActionableProposedPlan, activities, pendingApprovalCount] =
+      const [latestUserMessage, hasActionableProposedPlan, activities, pendingApprovalCount] =
         yield* Effect.all([
-          projectionThreadMessageRepository.getLatestUserMessageAt({ threadId }),
+          projectionThreadMessageRepository.getLatestUserMessageRevision({ threadId }),
           projectionThreadProposedPlanRepository.hasActionableByThreadId({
             threadId,
             latestTurnId: existingRow.value.latestTurnId,
@@ -594,7 +594,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
       yield* projectionThreadRepository.upsert({
         ...existingRow.value,
-        latestUserMessageAt,
+        latestUserMessageAt: latestUserMessage?.createdAt ?? null,
+        latestUserMessageId: latestUserMessage?.messageId ?? null,
         pendingApprovalCount,
         pendingUserInputCount,
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
@@ -636,6 +637,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
+            latestUserMessageId: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
@@ -991,7 +993,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        // A message cannot change any summary field except latestUserMessageAt,
+        // A message cannot change any summary field except the latest user-message revision,
         // which is a monotonic maximum that folds in directly. The full refresh
         // would re-read every message body in the thread per user message.
         case "thread.message-sent": {
@@ -1002,15 +1004,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
           const previousLatest = existingRow.value.latestUserMessageAt;
+          const previousLatestId = existingRow.value.latestUserMessageId;
+          const advancesLatestUserMessage =
+            event.payload.role === "user" &&
+            !event.payload.streaming &&
+            !isImportedAgentSessionMessageId(event.payload.messageId) &&
+            (previousLatest === null ||
+              event.payload.createdAt > previousLatest ||
+              (event.payload.createdAt === previousLatest &&
+                (previousLatestId === null || event.payload.messageId > previousLatestId)));
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.occurredAt,
-            latestUserMessageAt:
-              event.payload.role === "user" &&
-              !isImportedAgentSessionMessageId(event.payload.messageId) &&
-              (previousLatest === null || event.payload.createdAt > previousLatest)
-                ? event.payload.createdAt
-                : previousLatest,
+            latestUserMessageAt: advancesLatestUserMessage
+              ? event.payload.createdAt
+              : previousLatest,
+            latestUserMessageId: advancesLatestUserMessage
+              ? event.payload.messageId
+              : previousLatestId,
           });
           return;
         }

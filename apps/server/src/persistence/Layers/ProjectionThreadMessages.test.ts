@@ -12,11 +12,11 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
-  it.effect("finds the latest live user-message time within one thread", () =>
+  it.effect("finds the latest live user-message revision within one thread", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;
       const threadId = ThreadId.make("thread-latest-user-message");
-      assert.isNull(yield* repository.getLatestUserMessageAt({ threadId }));
+      assert.isNull(yield* repository.getLatestUserMessageRevision({ threadId }));
 
       yield* repository.upsert({
         messageId: MessageId.make("import:codex:latest-user-message:000000"),
@@ -28,7 +28,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         createdAt: "2026-02-28T19:05:06.000Z",
         updatedAt: "2026-02-28T19:05:06.000Z",
       });
-      assert.isNull(yield* repository.getLatestUserMessageAt({ threadId }));
+      assert.isNull(yield* repository.getLatestUserMessageRevision({ threadId }));
 
       const messages = [
         { role: "user", createdAt: "2026-02-28T19:05:02.000Z" },
@@ -57,13 +57,23 @@ layer("ProjectionThreadMessageRepository", (it) => {
         createdAt: "2026-02-28T19:05:05.000Z",
         updatedAt: "2026-02-28T19:05:05.000Z",
       });
+      yield* repository.upsert({
+        messageId: MessageId.make("latest-user-message-streaming"),
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "Streaming prompt",
+        isStreaming: true,
+        createdAt: "2026-02-28T19:05:06.000Z",
+        updatedAt: "2026-02-28T19:05:06.000Z",
+      });
 
-      assert.strictEqual(
-        yield* repository.getLatestUserMessageAt({ threadId }),
-        "2026-02-28T19:05:02.000Z",
-      );
+      assert.deepEqual(yield* repository.getLatestUserMessageRevision({ threadId }), {
+        messageId: MessageId.make("latest-user-message-0"),
+        createdAt: "2026-02-28T19:05:02.000Z",
+      });
       yield* repository.deleteByThreadId({ threadId });
-      assert.isNull(yield* repository.getLatestUserMessageAt({ threadId }));
+      assert.isNull(yield* repository.getLatestUserMessageRevision({ threadId }));
     }),
   );
 

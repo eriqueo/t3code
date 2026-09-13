@@ -12,6 +12,7 @@ import {
   AppendStreamingProjectionThreadMessage,
   GetProjectionThreadMessageInput,
   HasProjectionThreadAssistantMessageInput,
+  LatestProjectionThreadUserMessage,
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
   DeleteProjectionThreadMessagesInput,
@@ -226,16 +227,17 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
-  const getLatestUserMessageAtRow = SqlSchema.findOne({
+  const getLatestUserMessageRevisionRow = SqlSchema.findOneOption({
     Request: ListProjectionThreadMessagesInput,
-    Result: Schema.Struct({
-      latestUserMessageAt: Schema.NullOr(ProjectionThreadMessage.fields.createdAt),
-    }),
+    Result: LatestProjectionThreadUserMessage,
     execute: ({ threadId }) => sql`
-      SELECT MAX(created_at) AS "latestUserMessageAt"
+      SELECT message_id AS "messageId", created_at AS "createdAt"
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND role = 'user'
+        AND is_streaming = 0
         AND message_id NOT GLOB 'import:*'
+      ORDER BY created_at DESC, message_id DESC
+      LIMIT 1
     `,
   });
 
@@ -287,15 +289,16 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toProjectionThreadMessage)),
     );
 
-  const getLatestUserMessageAt: ProjectionThreadMessageRepositoryShape["getLatestUserMessageAt"] = (
-    input,
-  ) =>
-    getLatestUserMessageAtRow(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadMessageRepository.getLatestUserMessageAt:query"),
-      ),
-      Effect.map((row) => row.latestUserMessageAt),
-    );
+  const getLatestUserMessageRevision: ProjectionThreadMessageRepositoryShape["getLatestUserMessageRevision"] =
+    (input) =>
+      getLatestUserMessageRevisionRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.getLatestUserMessageRevision:query",
+          ),
+        ),
+        Effect.map(Option.getOrNull),
+      );
 
   const deleteByThreadId: ProjectionThreadMessageRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadMessageRows(input).pipe(
@@ -310,7 +313,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     getByMessageId,
     hasAssistantMessageForTurn,
     listByThreadId,
-    getLatestUserMessageAt,
+    getLatestUserMessageRevision,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });

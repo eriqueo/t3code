@@ -78,8 +78,8 @@ import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   deriveThreadHandoffState,
-  latestThreadUserMessageId,
   shouldPrepareThreadHandoff,
+  threadHandoffSourceMessageId,
 } from "@t3tools/shared/contextHandoff";
 import { uuidv4 } from "../../lib/uuid";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -327,9 +327,7 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
-  const handoffSourceMessageId = selectedThreadDetail
-    ? latestThreadUserMessageId({ messages: selectedThreadDetail.messages })
-    : null;
+  const handoffSourceMessageId = threadHandoffSourceMessageId(selectedThread);
   const handoffState = useMemo(
     () =>
       selectedThreadDetail && handoffSourceMessageId
@@ -344,15 +342,12 @@ function ThreadRouteContent(
     if (!handoffSupported || !selectedThread || !selectedThreadDetail || !handoffSourceMessageId)
       return;
     const requestKey = `${selectedThreadDetail.id}:${handoffSourceMessageId}`;
-    const latestMessageAt = selectedThreadDetail.messages.findLast(
-      (message) => !message.streaming,
-    )?.updatedAt;
     if (
       handoffRequestedRef.current === requestKey ||
       !shouldPrepareThreadHandoff({
         snapshotCurrent: selectedThreadDetailState.status === "live",
         nowMs: Date.now(),
-        latestMessageAt: latestMessageAt ?? null,
+        latestMessageAt: selectedThread.latestUserMessageAt,
         usedTokens: latestUsedContextTokens(selectedThreadDetail.activities),
         sessionStatus: selectedThreadDetail.session?.status ?? null,
         latestTurnState: selectedThreadDetail.latestTurn?.state ?? null,
@@ -377,6 +372,7 @@ function ThreadRouteContent(
     requests.activePendingApproval,
     requests.activePendingUserInput,
     selectedThreadDetail,
+    selectedThreadDetailState.status,
     selectedThread,
   ]);
   const [handoffActionBusy, setHandoffActionBusy] = useState(false);

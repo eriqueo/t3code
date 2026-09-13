@@ -1,4 +1,5 @@
 import {
+  isImportedAgentSessionMessageId,
   THREAD_HANDOFF_ACTIVITY_KINDS,
   ThreadHandoffActivityPayload,
   type ThreadHandoffDismissedActivityPayload,
@@ -7,6 +8,7 @@ import {
   type ThreadHandoffRequestedActivityPayload,
   type ThreadHandoffStartedActivityPayload,
   type MessageId,
+  type OrchestrationThreadShell,
   type OrchestrationThreadActivity,
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
@@ -35,9 +37,20 @@ export function latestThreadUserMessageId(input: {
 }): MessageId | null {
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
     const message = input.messages[index];
-    if (message?.role === "user" && !message.streaming) return message.id;
+    if (
+      message?.role === "user" &&
+      !message.streaming &&
+      !isImportedAgentSessionMessageId(message.id)
+    )
+      return message.id;
   }
   return null;
+}
+
+export function threadHandoffSourceMessageId(
+  shell: Pick<OrchestrationThreadShell, "latestUserMessageId"> | null | undefined,
+): MessageId | null {
+  return shell?.latestUserMessageId ?? null;
 }
 
 export function deriveThreadHandoffState(

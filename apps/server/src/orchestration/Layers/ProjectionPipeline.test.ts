@@ -3250,11 +3250,13 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       });
 
       const readSummary = sql<{
+        readonly latestUserMessageId: string | null;
         readonly latestUserMessageAt: string | null;
         readonly pendingUserInputCount: number;
         readonly updatedAt: string;
       }>`
         SELECT
+          latest_user_message_id AS "latestUserMessageId",
           latest_user_message_at AS "latestUserMessageAt",
           pending_user_input_count AS "pendingUserInputCount",
           updated_at AS "updatedAt"
@@ -3286,9 +3288,41 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 
       assert.deepEqual(yield* readSummary, [
         {
+          latestUserMessageId: "message-shell-summary-user",
           latestUserMessageAt: "2026-03-01T08:00:02.000Z",
           pendingUserInputCount: 0,
           updatedAt: "2026-03-01T08:00:02.000Z",
+        },
+      ]);
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-shell-summary-streaming-user"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-shell-summary"),
+        occurredAt: "2026-03-01T08:00:02.500Z",
+        commandId: CommandId.make("cmd-shell-summary-streaming-user"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-shell-summary-streaming-user"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-shell-summary"),
+          messageId: MessageId.make("message-shell-summary-streaming-user"),
+          role: "user",
+          text: "unfinished prompt",
+          turnId: TurnId.make("turn-shell-summary-1"),
+          streaming: true,
+          createdAt: "2026-03-01T08:00:02.500Z",
+          updatedAt: "2026-03-01T08:00:02.500Z",
+        },
+      });
+
+      assert.deepEqual(yield* readSummary, [
+        {
+          latestUserMessageId: "message-shell-summary-user",
+          latestUserMessageAt: "2026-03-01T08:00:02.000Z",
+          pendingUserInputCount: 0,
+          updatedAt: "2026-03-01T08:00:02.500Z",
         },
       ]);
 
@@ -3318,6 +3352,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 
       assert.deepEqual(yield* readSummary, [
         {
+          latestUserMessageId: "message-shell-summary-user",
           latestUserMessageAt: "2026-03-01T08:00:02.000Z",
           pendingUserInputCount: 0,
           updatedAt: "2026-03-01T08:00:03.000Z",
@@ -3352,6 +3387,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 
       assert.deepEqual(yield* readSummary, [
         {
+          latestUserMessageId: "message-shell-summary-user",
           latestUserMessageAt: "2026-03-01T08:00:02.000Z",
           pendingUserInputCount: 0,
           updatedAt: "2026-03-01T08:00:04.000Z",
@@ -3394,6 +3430,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 
       assert.deepEqual(yield* readSummary, [
         {
+          latestUserMessageId: "message-shell-summary-user",
           latestUserMessageAt: "2026-03-01T08:00:02.000Z",
           pendingUserInputCount: 1,
           updatedAt: "2026-03-01T08:00:05.000Z",
@@ -3478,12 +3515,14 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       for (const event of refreshEvents) {
         yield* appendAndProject(event);
         const summary = yield* sql<{
+          readonly latestUserMessageId: string | null;
           readonly latestUserMessageAt: string | null;
           readonly pendingApprovalCount: number;
           readonly pendingUserInputCount: number;
           readonly hasActionableProposedPlan: number;
         }>`
           SELECT
+            latest_user_message_id AS "latestUserMessageId",
             latest_user_message_at AS "latestUserMessageAt",
             pending_approval_count AS "pendingApprovalCount",
             pending_user_input_count AS "pendingUserInputCount",
@@ -3493,6 +3532,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         `;
         assert.deepEqual(summary, [
           {
+            latestUserMessageId: "message-shell-summary-user",
             latestUserMessageAt: "2026-03-01T08:00:02.000Z",
             pendingApprovalCount: 1,
             pendingUserInputCount: 1,

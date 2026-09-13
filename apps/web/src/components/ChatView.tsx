@@ -75,8 +75,8 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { truncate } from "@t3tools/shared/String";
 import {
   deriveThreadHandoffState,
-  latestThreadUserMessageId,
   shouldPrepareThreadHandoff,
+  threadHandoffSourceMessageId,
 } from "@t3tools/shared/contextHandoff";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -5999,9 +5999,7 @@ export default function ChatView(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
-  const handoffSourceMessageId = activeThread
-    ? latestThreadUserMessageId({ messages: activeThread.messages })
-    : null;
+  const handoffSourceMessageId = threadHandoffSourceMessageId(routeServerThreadShell);
   const threadHandoffState = useMemo(
     () =>
       activeThread && handoffSourceMessageId
@@ -6019,15 +6017,12 @@ export default function ChatView(props: ChatViewProps) {
     )
       return;
     const key = `${activeThread.id}:${handoffSourceMessageId}`;
-    const latestMessageAt = activeThread.messages.findLast(
-      (message) => !message.streaming,
-    )?.updatedAt;
     if (
       requestedHandoffKeysRef.current.has(key) ||
       !shouldPrepareThreadHandoff({
         snapshotCurrent: threadSyncPhase === null,
         nowMs: Date.parse(`${nowMinute}:00.000Z`),
-        latestMessageAt: latestMessageAt ?? null,
+        latestMessageAt: routeServerThreadShell?.latestUserMessageAt ?? null,
         usedTokens: activeContextWindow.usedTokens,
         sessionStatus: activeThread.session?.status ?? null,
         latestTurnState: activeThread.latestTurn?.state ?? null,
@@ -6055,7 +6050,9 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length,
     pendingUserInputs.length,
     prepareThreadHandoff,
+    routeServerThreadShell?.latestUserMessageAt,
     supportsThreadContextHandoffs,
+    threadSyncPhase,
     threadHandoffState.state,
   ]);
   const [handoffActionBusy, setHandoffActionBusy] = useState(false);

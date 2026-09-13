@@ -885,6 +885,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
+  // Optional on the wire so cached snapshots from older servers still decode.
+  latestUserMessageId: Schema.optional(Schema.NullOr(MessageId)),
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
