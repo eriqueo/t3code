@@ -646,6 +646,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.deepEqual(commandReadModel.threads[0]?.pullRequests, expectedPullRequests);
+      assert.equal(
+        commandReadModel.threads[0]?.latestUserMessageId,
+        MessageId.make("message-user-1"),
+      );
       assert.deepEqual(
         commandReadModel.threads[0]?.linkedPullRequest,
         snapshot.threads[0]?.linkedPullRequest,

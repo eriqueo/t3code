@@ -2509,6 +2509,7 @@ pending_approval_requests AS (
                   activeOrderKey: row.activeOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   deletedAt: row.deletedAt,
+                  latestUserMessageId: row.latestUserMessageId,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],

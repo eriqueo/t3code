@@ -18,7 +18,10 @@ const NOW = "2026-09-12T16:00:00.000Z";
 const SOURCE = MessageId.make("message-source");
 const REQUEST = CommandId.make("handoff-request");
 
-function makeReadModel(activities: OrchestrationThread["activities"] = []): OrchestrationReadModel {
+function makeReadModel(
+  activities: OrchestrationThread["activities"] = [],
+  options?: { readonly commandSnapshot?: boolean },
+): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [
@@ -59,26 +62,29 @@ function makeReadModel(activities: OrchestrationThread["activities"] = []): Orch
         settledOverride: null,
         settledAt: null,
         deletedAt: null,
-        messages: [
-          {
-            id: SOURCE,
-            role: "user",
-            text: "Please finish the current task",
-            turnId: null,
-            streaming: false,
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-          {
-            id: MessageId.make("assistant-response"),
-            role: "assistant",
-            text: "Current state",
-            turnId: null,
-            streaming: false,
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-        ],
+        ...(options?.commandSnapshot ? { latestUserMessageId: SOURCE } : {}),
+        messages: options?.commandSnapshot
+          ? []
+          : [
+              {
+                id: SOURCE,
+                role: "user",
+                text: "Please finish the current task",
+                turnId: null,
+                streaming: false,
+                createdAt: NOW,
+                updatedAt: NOW,
+              },
+              {
+                id: MessageId.make("assistant-response"),
+                role: "assistant",
+                text: "Current state",
+                turnId: null,
+                streaming: false,
+                createdAt: NOW,
+                updatedAt: NOW,
+              },
+            ],
         proposedPlans: [],
         activities,
         checkpoints: [],
@@ -100,7 +106,7 @@ it.layer(NodeServices.layer)("context handoff decider", (it) => {
           sourceMessageId: SOURCE,
           createdAt: NOW,
         },
-        readModel: makeReadModel(),
+        readModel: makeReadModel([], { commandSnapshot: true }),
       });
       const event = Array.isArray(result) ? result[0] : result;
       expect(event.type).toBe("thread.activity-appended");

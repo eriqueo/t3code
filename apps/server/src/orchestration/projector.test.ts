@@ -897,13 +897,21 @@ describe("orchestration projector", () => {
       }),
     ];
 
-    const afterRevert = await events.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
-      (statePromise, event) =>
-        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
-      Promise.resolve(afterCreate),
-    );
+    const beforeRevert = await events
+      .slice(0, -1)
+      .reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+        (statePromise, event) =>
+          statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+        Promise.resolve(afterCreate),
+      );
+    expect(beforeRevert.threads[0]?.latestUserMessageId).toBe("user-msg-2");
+
+    const revertEvent = events.at(-1);
+    expect(revertEvent).toBeDefined();
+    const afterRevert = await Effect.runPromise(projectEvent(beforeRevert, revertEvent!));
 
     const thread = afterRevert.threads[0];
+    expect(thread?.latestUserMessageId).toBe("user-msg-1");
     expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual(
       [
         { role: "user", text: "First edit" },

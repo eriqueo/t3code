@@ -19,6 +19,7 @@ import {
   legacyThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
+import { latestThreadUserMessageId } from "@t3tools/shared/contextHandoff";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -796,6 +797,11 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            ...(message.role === "user" &&
+            !message.streaming &&
+            !isImportedAgentSessionMessageId(message.id)
+              ? { latestUserMessageId: message.id }
+              : {}),
             updatedAt: event.occurredAt,
           }),
         };
@@ -998,6 +1004,7 @@ export function projectEvent(
             retainedTurnIds,
           ).slice(-200);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const latestUserMessageId = latestThreadUserMessageId({ messages });
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -1017,6 +1024,7 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
               messages,
+              latestUserMessageId,
               proposedPlans,
               activities,
               latestTurn,

@@ -81,6 +81,18 @@ describe("context handoff policy", () => {
     expect(threadHandoffSourceMessageId({})).toBeNull();
   });
 
+  it("uses an authoritative revision when a command snapshot omits message bodies", () => {
+    expect(
+      latestThreadUserMessageId({ latestUserMessageId: SOURCE_MESSAGE_ID, messages: [] }),
+    ).toBe(SOURCE_MESSAGE_ID);
+    expect(
+      latestThreadUserMessageId({
+        latestUserMessageId: null,
+        messages: [{ id: SOURCE_MESSAGE_ID, role: "user", streaming: false }],
+      }),
+    ).toBeNull();
+  });
+
   it("selects the latest terminal activity for the current source revision", () => {
     const requestId = CommandId.make("request-1");
     const base = {

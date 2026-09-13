@@ -816,6 +816,10 @@ export const OrchestrationThread = Schema.Struct({
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
+  // Command snapshots intentionally omit message bodies. Carry the authoritative
+  // revision separately so commands can still guard work against conversation changes.
+  // Optional so cached snapshots from older servers still decode.
+  latestUserMessageId: Schema.optional(Schema.NullOr(MessageId)),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
