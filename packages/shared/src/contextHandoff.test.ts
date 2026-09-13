@@ -3,7 +3,7 @@ import { CommandId, EventId, MessageId } from "@t3tools/contracts";
 
 import {
   deriveThreadHandoffState,
-  latestThreadMessageId,
+  latestThreadUserMessageId,
   shouldPrepareThreadHandoff,
 } from "./contextHandoff.ts";
 
@@ -42,13 +42,14 @@ describe("context handoff policy", () => {
     ).toBe(false);
   });
 
-  it("uses the latest non-streaming message as the source revision", () => {
+  it("uses the latest non-streaming user message as the source revision", () => {
     expect(
-      latestThreadMessageId({
+      latestThreadUserMessageId({
         messages: [
-          { id: MessageId.make("message-1"), streaming: false },
-          { id: SOURCE_MESSAGE_ID, streaming: false },
-          { id: MessageId.make("message-streaming"), streaming: true },
+          { id: MessageId.make("message-1"), role: "user", streaming: false },
+          { id: SOURCE_MESSAGE_ID, role: "user", streaming: false },
+          { id: MessageId.make("assistant-final"), role: "assistant", streaming: false },
+          { id: MessageId.make("message-streaming"), role: "user", streaming: true },
         ],
       }),
     ).toBe(SOURCE_MESSAGE_ID);

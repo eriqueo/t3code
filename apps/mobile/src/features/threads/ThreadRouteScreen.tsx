@@ -78,7 +78,7 @@ import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   deriveThreadHandoffState,
-  latestThreadMessageId,
+  latestThreadUserMessageId,
   shouldPrepareThreadHandoff,
 } from "@t3tools/shared/contextHandoff";
 import { uuidv4 } from "../../lib/uuid";
@@ -328,7 +328,7 @@ function ThreadRouteContent(
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
   const handoffSourceMessageId = selectedThreadDetail
-    ? latestThreadMessageId({ messages: selectedThreadDetail.messages })
+    ? latestThreadUserMessageId({ messages: selectedThreadDetail.messages })
     : null;
   const handoffState = useMemo(
     () =>

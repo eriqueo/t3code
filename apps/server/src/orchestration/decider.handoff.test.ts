@@ -62,6 +62,15 @@ function makeReadModel(activities: OrchestrationThread["activities"] = []): Orch
         messages: [
           {
             id: SOURCE,
+            role: "user",
+            text: "Please finish the current task",
+            turnId: null,
+            streaming: false,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+          {
+            id: MessageId.make("assistant-response"),
             role: "assistant",
             text: "Current state",
             turnId: null,

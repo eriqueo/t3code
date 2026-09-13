@@ -34,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Result from "effect/Result";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { latestThreadUserMessageId } from "@t3tools/shared/contextHandoff";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -1886,12 +1887,12 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(threadOption)) return;
     const thread = threadOption.value;
-    const latestMessage = thread.messages.findLast((message) => !message.streaming);
+    const latestMessageId = latestThreadUserMessageId(thread);
     const latestState = thread.activities
       .map((activity) => activity.payload)
       .findLast(isHandoffActivityPayload);
     if (
-      latestMessage?.id !== request.sourceMessageId ||
+      latestMessageId !== request.sourceMessageId ||
       latestState?.state !== "requested" ||
       latestState.requestId !== request.requestId
     ) {
@@ -1928,12 +1929,12 @@ const make = Effect.gen(function* () {
       activityKinds: Object.values(THREAD_HANDOFF_ACTIVITY_KINDS),
     });
     if (Option.isNone(currentThread)) return;
-    const currentMessage = currentThread.value.messages.findLast((message) => !message.streaming);
+    const currentMessageId = latestThreadUserMessageId(currentThread.value);
     const currentHandoff = currentThread.value.activities
       .map((activity) => activity.payload)
       .findLast(isHandoffActivityPayload);
     if (
-      currentMessage?.id !== request.sourceMessageId ||
+      currentMessageId !== request.sourceMessageId ||
       currentHandoff?.state !== "requested" ||
       currentHandoff.requestId !== request.requestId
     )

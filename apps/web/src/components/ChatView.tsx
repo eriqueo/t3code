@@ -75,7 +75,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { truncate } from "@t3tools/shared/String";
 import {
   deriveThreadHandoffState,
-  latestThreadMessageId,
+  latestThreadUserMessageId,
   shouldPrepareThreadHandoff,
 } from "@t3tools/shared/contextHandoff";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -5999,7 +5999,7 @@ export default function ChatView(props: ChatViewProps) {
     isUnsettling,
   ]);
   const handoffSourceMessageId = activeThread
-    ? latestThreadMessageId({ messages: activeThread.messages })
+    ? latestThreadUserMessageId({ messages: activeThread.messages })
     : null;
   const threadHandoffState = useMemo(
     () =>
