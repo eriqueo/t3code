@@ -1,12 +1,17 @@
 import { MessageId, type OrchestrationMessage } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  INPUT_REVIEW_HEADROOM,
   buildContextHandoffInput,
   buildContextHandoffPrompt,
   prepareContextHandoff,
@@ -239,11 +244,45 @@ it.effect("rejects excessive rendered quotation cost before rendering a report",
   }),
 );
 
-it("keeps a contiguous recent passage window instead of backfilling older short passages", () => {
+it("retains early user constraints and initial context across large assistant history", () => {
+  const input = buildContextHandoffInput({
+    title: "Durable constraints",
+    messages: [
+      message(
+        "initial-user",
+        "user",
+        "Every outbound reply requires /ghl; ordinary replies stay internal.",
+      ),
+      message("architecture", "assistant", "Use the shared provider engine."),
+      message("middle", "assistant", "investigation ".repeat(12_000)),
+      message(
+        "receipt",
+        "assistant",
+        "The final live test failed; signed delivery remains unverified.",
+      ),
+    ],
+  });
+  assert.include(
+    input.records.map((r) => r.source),
+    "initial-user",
+  );
+  assert.include(
+    input.records.map((r) => r.source),
+    "architecture",
+  );
+  assert.include(
+    input.records.map((r) => r.source),
+    "receipt",
+  );
+  assert.isAtMost(input.prompt.length, 65_536);
+});
+
+it("keeps recent assistant passages contiguous outside the explicit reservations", () => {
   const input = buildContextHandoffInput({
     title: "Recent window",
     messages: [
-      message("old", "user", "old"),
+      message("initial", "assistant", "x".repeat(10_000)),
+      message("old-short", "assistant", "not in initial or recent window"),
       message("large", "assistant", "x".repeat(100_000)),
       message("last", "user", "latest"),
     ],
@@ -251,10 +290,44 @@ it("keeps a contiguous recent passage window instead of backfilling older short 
   assert.isAbove(input.omitted, 0);
   assert.notInclude(
     input.records.map((r) => r.source),
-    "old",
+    "old-short",
   );
+  const recentIds = [...input.prompt.matchAll(/\[(P\d+) [^\n]*retention=recent;/g)].map((match) =>
+    Number(match[1]!.slice(1)),
+  );
+  assert.strictEqual(recentIds.at(-1)! - recentIds[0]! + 1, recentIds.length);
+});
+
+it("sheds older whole user passages at the user reservation ceiling and discloses omissions", () => {
+  const users = Array.from({ length: 12 }, (_, index) =>
+    message(`user-${index}`, "user", `${index}:` + "u".repeat(1_200)),
+  );
+  const input = buildContextHandoffInput({
+    title: "User overflow",
+    messages: [
+      message("initial", "assistant", "i".repeat(10_000)),
+      ...users,
+      message("middle", "assistant", "m".repeat(100_000)),
+      message("receipt", "assistant", "Latest failure receipt"),
+    ],
+  });
+  const retainedUsers = input.records.filter((r) => r.role === "user");
+  assert.isAbove(retainedUsers.length, 0);
+  assert.isBelow(retainedUsers.length, users.length);
+  assert.deepEqual(
+    retainedUsers.map((r) => r.source),
+    users.slice(-retainedUsers.length).map((m) => String(m.id)),
+  );
+  for (const record of retainedUsers)
+    assert.strictEqual(record.text, users.find((m) => String(m.id) === record.source)!.text);
+  assert.include(input.prompt, `omitted user passages: ${users.length - retainedUsers.length}`);
+  assert.isAtMost(input.prompt.length + INPUT_REVIEW_HEADROOM, 65_536);
+  assert.strictEqual(new Set(input.records.map((r) => r.id)).size, input.records.length);
   const ids = input.records.map((r) => Number(r.id.slice(1)));
-  assert.strictEqual(ids.at(-1)! - ids[0]! + 1, ids.length);
+  assert.deepEqual(
+    ids,
+    ids.toSorted((a, b) => a - b),
+  );
 });
 
 it.effect("honors rendered passage weights at the selection limit with dense anchors", () =>
@@ -335,5 +408,197 @@ it.effect("labels clipped anchor tails and orders anchors by source message chro
     assert.include(handoff, "😀");
     assert.notMatch(handoff, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
     assert.notInclude(handoff, "oversized passages");
+  }),
+);
+
+const twoPassInput = {
+  cwd: "/workspace",
+  title: "Coverage audit",
+  messages: [
+    message("old", "assistant", "Earlier proposal.\n\nFinal receipt: build failed."),
+    message("user", "user", "Inspect only."),
+    message("last", "assistant", "Awaiting decision."),
+  ],
+};
+const workerOutput = (result: string, elapsedMs = 7): ProcessRunner.ProcessRunOutput => ({
+  stdout: encodeFixture({
+    schemaVersion: 1,
+    provider: "pi",
+    requestedModel: "dx2/llm",
+    state: "completed",
+    result,
+    elapsedMs,
+  }),
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+it.effect("audits the same bounded input twice and publishes only the replacement selection", () =>
+  Effect.gen(function* () {
+    const calls: ProcessRunner.ProcessRunInput[] = [];
+    const input = {
+      ...twoPassInput,
+      messages: [...twoPassInput.messages, message("huge", "assistant", "x".repeat(100_000))],
+    };
+    const base = buildContextHandoffInput(input).prompt;
+    const result = yield* prepareContextHandoff(input).pipe(
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: (call) => {
+            calls.push(call);
+            return Effect.succeed(
+              workerOutput(
+                encodeFixture({
+                  version: 1,
+                  passageIds: [calls.length === 1 ? "P1" : "P2"],
+                  ignored: "untrusted extras".repeat(1000),
+                }),
+                calls.length * 7,
+              ),
+            );
+          },
+        }),
+      ),
+    );
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(calls[0]!.stdin, base);
+    assert.isTrue(calls[1]!.stdin!.startsWith(base));
+    assert.include(calls[1]!.stdin!, '"passageIds":["P1"]');
+    assert.notInclude(calls[1]!.stdin!, "untrusted extras");
+    assert.isTrue(calls.every((call) => call.stdin!.length <= 65_536));
+    assert.include(result.handoff, "> Final receipt: build failed.");
+    assert.notInclude(result.handoff, "> Earlier proposal.");
+    assert.strictEqual(result.elapsedMs, 21);
+    assert.strictEqual(
+      result.inputCharacters,
+      calls.reduce((n, call) => n + call.stdin!.length, 0),
+    );
+  }),
+);
+
+it.effect("fails invalid first or second selections without retry or fallback", () =>
+  Effect.gen(function* () {
+    for (const invalidPass of [1, 2]) {
+      let calls = 0;
+      const failure = yield* prepareContextHandoff(twoPassInput).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: () => {
+              calls++;
+              return Effect.succeed(
+                workerOutput(
+                  encodeFixture({
+                    version: 1,
+                    passageIds: [calls === invalidPass ? "P999" : "P1"],
+                  }),
+                ),
+              );
+            },
+          }),
+        ),
+        Effect.flip,
+      );
+      assert.strictEqual(failure.code, "invalid_source_reference");
+      assert.strictEqual(calls, invalidPass);
+    }
+  }),
+);
+
+it.effect("shares one deadline and interrupts the second pass at the remaining limit", () =>
+  Effect.gen(function* () {
+    const firstStarted = yield* Deferred.make<void>();
+    const finishFirst = yield* Deferred.make<void>();
+    const secondStarted = yield* Deferred.make<void>();
+    const secondStopped = yield* Deferred.make<void>();
+    const calls: ProcessRunner.ProcessRunInput[] = [];
+    const fiber = yield* prepareContextHandoff(twoPassInput).pipe(
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: (call) => {
+            calls.push(call);
+            return calls.length === 1
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishFirst)),
+                  Effect.as(workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] }))),
+                )
+              : Deferred.succeed(secondStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.ensuring(Deferred.succeed(secondStopped, undefined)),
+                );
+          },
+        }),
+      ),
+      Effect.result,
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(firstStarted);
+    yield* TestClock.adjust("4 minutes");
+    yield* Deferred.succeed(finishFirst, undefined);
+    yield* Deferred.await(secondStarted);
+    assert.strictEqual(Duration.toMillis(Duration.fromInputUnsafe(calls[1]!.timeout!)), 360_000);
+    yield* TestClock.adjust("6 minutes");
+    const result = yield* Fiber.join(fiber);
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "worker_timeout");
+    yield* Deferred.await(secondStopped);
+    assert.strictEqual(calls.length, 2);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("carries packing and omitted-user disclosure into the rendered report", () =>
+  Effect.gen(function* () {
+    const input = buildContextHandoffInput({
+      title: "Omissions",
+      messages: [
+        message("large", "user", "x".repeat(100_000)),
+        message("last", "assistant", "Waiting"),
+      ],
+    });
+    const handoff = yield* renderContextHandoff(
+      input,
+      encodeFixture({ version: 1, passageIds: [input.records[0]!.id] }),
+    );
+    const disclosure = input.prompt.split("\n").find((line) => line.startsWith("Packing:"))!;
+    assert.include(handoff, disclosure);
+  }),
+);
+
+it.effect("preserves a typed audit-worker failure without publishing the first pass", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const failure = yield* prepareContextHandoff(twoPassInput).pipe(
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: () => {
+            calls++;
+            return Effect.succeed(
+              calls === 1
+                ? workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] }))
+                : {
+                    ...workerOutput(""),
+                    code: ChildProcessSpawner.ExitCode(1),
+                    stderr: encodeFixture({
+                      code: "model_unavailable",
+                      detail: "Audit unavailable",
+                    }),
+                  },
+            );
+          },
+        }),
+      ),
+      Effect.flip,
+    );
+    assert.strictEqual(failure.code, "model_unavailable");
+    assert.strictEqual(failure.detail, "Audit unavailable");
+    assert.strictEqual(calls, 2);
   }),
 );
