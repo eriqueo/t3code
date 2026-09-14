@@ -77,6 +77,12 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Latest durable handoff decision for one source revision, without loading history. */
+  readonly getHandoffActivity: (input: {
+    readonly threadId: ThreadId;
+    readonly sourceMessageId: MessageId;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;

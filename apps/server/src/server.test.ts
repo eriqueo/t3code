@@ -982,6 +982,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getHandoffActivity: () => Effect.die("unused"),
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),

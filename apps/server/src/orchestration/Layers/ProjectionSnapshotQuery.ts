@@ -1,5 +1,6 @@
 import {
   AgentSessionImportSource,
+  THREAD_HANDOFF_ACTIVITY_KINDS,
   ApprovalRequestId,
   ChatAttachment,
   OrchestrationMessageContext,
@@ -1410,6 +1411,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           activity_id ASC
       `,
   });
+
+  // Handoff activity.sequence may be absent. Committed event order resolves
+  // equal timestamps without reviving an older ready packet after dismissal.
+  // Join the current projection so reverted/deleted activities remain excluded.
+  const getHandoffActivityRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, sourceMessageId: MessageId }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, sourceMessageId }) => sql`
+      SELECT a.activity_id AS "activityId", a.thread_id AS "threadId", a.turn_id AS "turnId",
+        a.tone, a.kind, a.summary, a.payload_json AS "payload", e.sequence, a.created_at AS "createdAt"
+      FROM projection_thread_activities AS a
+      JOIN orchestration_events AS e
+        ON e.aggregate_kind = 'thread' AND e.stream_id = a.thread_id
+        AND e.event_type = 'thread.activity-appended'
+        AND json_extract(e.payload_json, '$.activity.id') = a.activity_id
+      WHERE a.thread_id = ${threadId}
+        AND ${sql.in("kind", Object.values(THREAD_HANDOFF_ACTIVITY_KINDS))}
+        AND json_extract(a.payload_json, '$.sourceMessageId') = ${sourceMessageId}
+      ORDER BY e.sequence DESC
+      LIMIT 1
+    `,
+  });
+
+  const getHandoffActivity: ProjectionSnapshotQueryShape["getHandoffActivity"] = (input) =>
+    getHandoffActivityRow(input).pipe(
+      Effect.map(Option.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getHandoffActivity:query",
+          "ProjectionSnapshotQuery.getHandoffActivity:decodeRow",
+        ),
+      ),
+    );
 
   const getUserInputActivityRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, requestId: ApprovalRequestId }),
@@ -3684,6 +3718,7 @@ pending_approval_requests AS (
   return {
     getCommandReadModel,
     getUserInputActivity,
+    getHandoffActivity,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,

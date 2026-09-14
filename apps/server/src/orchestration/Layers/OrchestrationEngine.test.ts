@@ -130,6 +130,166 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each([
+    ["restart", "start"],
+    ["restart", "dismiss"],
+    ["activity eviction", "start"],
+  ])("uses durable handoff decisions after %s for %s", async (boundary, action) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-handoff-state-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const threadId = ThreadId.make("handoff-source");
+    const projectId = ProjectId.make("handoff-project");
+    const sourceMessageId = MessageId.make("handoff-message");
+    const requestId = CommandId.make("handoff-prepare");
+    const handoff = "# Operational handoff\n\nPreserve the bounded task and verify evidence.";
+    const dispatch = (command: OrchestrationCommand) => system.run(system.engine.dispatch(command));
+    try {
+      await dispatch({
+        type: "project.create",
+        commandId: CommandId.make("project"),
+        projectId,
+        title: "Handoff",
+        workspaceRoot: directory,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("source"),
+        threadId,
+        projectId,
+        title: "Handoff",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("source-turn"),
+        threadId,
+        message: {
+          messageId: sourceMessageId,
+          role: "user",
+          text: "OLD HISTORY MUST NOT BE REPLAYED",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.handoff.prepare",
+        commandId: requestId,
+        threadId,
+        sourceMessageId,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("ready"),
+        threadId,
+        createdAt: now(),
+        activity: {
+          id: EventId.make("ready"),
+          kind: "context-handoff.ready",
+          summary: "Ready",
+          tone: "info",
+          turnId: null,
+          createdAt: now(),
+          payload: {
+            state: "ready",
+            requestId,
+            sourceMessageId,
+            handoff,
+            elapsedMs: 1,
+            inputCharacters: 100,
+            outputCharacters: handoff.length,
+          },
+        },
+      });
+      if (boundary === "restart") {
+        await system.dispose();
+        system = await createOrchestrationSystem(databasePath);
+      } else {
+        for (let index = 0; index < 501; index += 1) {
+          await dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make(`noise-${index}`),
+            threadId,
+            createdAt: now(),
+            activity: {
+              id: EventId.make(`noise-${index}`),
+              kind: "tool.completed",
+              summary: "Work",
+              tone: "info",
+              turnId: null,
+              createdAt: now(),
+              payload: {},
+            },
+          });
+        }
+      }
+      const targetThreadId = ThreadId.make("handoff-successor");
+      await expect(
+        dispatch({
+          type: "thread.handoff.prepare",
+          commandId: CommandId.make("duplicate-prepare"),
+          threadId,
+          sourceMessageId,
+          createdAt: now(),
+        }),
+      ).rejects.toThrow("already has a handoff decision");
+      if (action === "dismiss") {
+        await dispatch({
+          type: "thread.handoff.dismiss",
+          commandId: CommandId.make("dismiss"),
+          threadId,
+          sourceMessageId,
+          createdAt: now(),
+        });
+        await system.dispose();
+        system = await createOrchestrationSystem(databasePath);
+        await expect(
+          dispatch({
+            type: "thread.handoff.start",
+            commandId: CommandId.make("dismissed-start"),
+            threadId,
+            requestId,
+            targetThreadId,
+            createdAt: now(),
+          }),
+        ).rejects.toThrow("stale or no longer available");
+        expect(Option.isNone(await system.readThread(targetThreadId))).toBe(true);
+        return;
+      }
+      await dispatch({
+        type: "thread.handoff.start",
+        commandId: CommandId.make("start"),
+        threadId,
+        requestId,
+        targetThreadId,
+        createdAt: now(),
+      });
+      const successor = Option.getOrThrow(await system.readThread(targetThreadId));
+      expect(successor.messages).toHaveLength(1);
+      expect(successor.messages[0]?.text).toContain(handoff);
+      expect(successor.messages[0]?.text).not.toContain("OLD HISTORY MUST NOT BE REPLAYED");
+      expect(successor.runtimeMode).toBe("approval-required");
+      const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      expect(
+        Array.from(events)
+          .filter((event) => event.commandId === "start")
+          .map((event) => event.type),
+      ).toContain("thread.turn-start-requested");
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -419,6 +579,7 @@ describe("OrchestrationEngine", () => {
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
+          getHandoffActivity: () => Effect.die("unused"),
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>

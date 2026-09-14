@@ -5,7 +5,8 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { OrchestrationCommand, THREAD_HANDOFF_ACTIVITY_KINDS } from "@t3tools/contracts";
+import { latestThreadUserMessageId } from "@t3tools/shared/contextHandoff";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -242,9 +243,43 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Handoff decisions outlive the lightweight command activity window.
+        // Hydrate only this revision's latest durable decision, including
+        // dismissal/failure, so restart cannot lose readiness or permit repeats.
+        let decisionReadModel = commandReadModel;
+        if (
+          envelope.command.type === "thread.handoff.prepare" ||
+          envelope.command.type === "thread.handoff.dismiss" ||
+          envelope.command.type === "thread.handoff.start"
+        ) {
+          const threadId = envelope.command.threadId;
+          const thread = commandReadModel.threads.find((entry) => entry.id === threadId);
+          const sourceMessageId = thread === undefined ? null : latestThreadUserMessageId(thread);
+          if (thread !== undefined && sourceMessageId !== null) {
+            const activity = yield* projectionSnapshotQuery.getHandoffActivity({
+              threadId: thread.id,
+              sourceMessageId,
+            });
+            const kinds = new Set<string>(Object.values(THREAD_HANDOFF_ACTIVITY_KINDS));
+            decisionReadModel = {
+              ...commandReadModel,
+              threads: commandReadModel.threads.map((entry) =>
+                entry.id !== thread.id
+                  ? entry
+                  : {
+                      ...entry,
+                      activities: [
+                        ...entry.activities.filter((entry) => !kinds.has(entry.kind)),
+                        ...Option.toArray(activity),
+                      ],
+                    },
+              ),
+            };
+          }
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
-          readModel: commandReadModel,
+          readModel: decisionReadModel,
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
