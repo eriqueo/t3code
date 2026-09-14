@@ -376,32 +376,35 @@ function ThreadRouteContent(
     selectedThread,
   ]);
   const [handoffActionBusy, setHandoffActionBusy] = useState(false);
+  const handoffActionBusyRef = useRef(false);
   const keepFullHistory = useCallback(async () => {
-    if (!selectedThread || !selectedThreadDetail || !handoffSourceMessageId || handoffActionBusy)
+    if (
+      !selectedThread ||
+      !selectedThreadDetail ||
+      !handoffSourceMessageId ||
+      handoffActionBusyRef.current
+    )
       return;
+    handoffActionBusyRef.current = true;
     setHandoffActionBusy(true);
     const result = await dismissThreadHandoff({
       environmentId: selectedThread.environmentId,
       input: { threadId: selectedThreadDetail.id, sourceMessageId: handoffSourceMessageId },
     });
+    handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
     if (result._tag === "Failure")
       Alert.alert("Could not keep the full conversation", "Try again.");
-  }, [
-    dismissThreadHandoff,
-    handoffActionBusy,
-    handoffSourceMessageId,
-    selectedThread,
-    selectedThreadDetail,
-  ]);
+  }, [dismissThreadHandoff, handoffSourceMessageId, selectedThread, selectedThreadDetail]);
   const startFresh = useCallback(async () => {
     if (
       !selectedThread ||
       !selectedThreadDetail ||
       handoffState.state !== "ready" ||
-      handoffActionBusy
+      handoffActionBusyRef.current
     )
       return;
+    handoffActionBusyRef.current = true;
     setHandoffActionBusy(true);
     const targetThreadId = ThreadId.make(uuidv4());
     const result = await startThreadHandoff({
@@ -412,6 +415,7 @@ function ThreadRouteContent(
         targetThreadId,
       },
     });
+    handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
     if (result._tag === "Failure") {
       Alert.alert("Could not start a fresh conversation", "Try again.");
@@ -423,13 +427,35 @@ function ThreadRouteContent(
         threadId: String(targetThreadId),
       }),
     );
+  }, [handoffState, navigation, selectedThread, selectedThreadDetail, startThreadHandoff]);
+  const retryHandoff = useCallback(async () => {
+    if (
+      !selectedThread ||
+      !selectedThreadDetail ||
+      !handoffSourceMessageId ||
+      handoffActionBusyRef.current ||
+      (handoffState.state !== "ready" && handoffState.state !== "failed")
+    )
+      return;
+    handoffActionBusyRef.current = true;
+    setHandoffActionBusy(true);
+    const result = await prepareThreadHandoff({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThreadDetail.id,
+        sourceMessageId: handoffSourceMessageId,
+        retry: true,
+      },
+    });
+    handoffActionBusyRef.current = false;
+    setHandoffActionBusy(false);
+    if (result._tag === "Failure") Alert.alert("Could not request a DX2 handoff", "Try again.");
   }, [
-    handoffActionBusy,
-    handoffState,
-    navigation,
     selectedThread,
     selectedThreadDetail,
-    startThreadHandoff,
+    handoffState.state,
+    handoffSourceMessageId,
+    prepareThreadHandoff,
   ]);
   const contextHandoffCard = useMemo(() => {
     if (!handoffSupported || ["none", "dismissed", "started"].includes(handoffState.state)) {
@@ -453,7 +479,7 @@ function ThreadRouteContent(
               ? "Start fresh without replaying this full thread to the frontier model."
               : "You can keep working here while it runs."}
         </Text>
-        <View className="mt-2 flex-row justify-end gap-2">
+        <View className="mt-2 flex-row flex-wrap justify-end gap-2">
           <Pressable
             accessibilityRole="button"
             disabled={handoffActionBusy}
@@ -462,6 +488,18 @@ function ThreadRouteContent(
           >
             <Text className="text-sm font-medium text-muted-foreground">Keep history</Text>
           </Pressable>
+          {ready || failed ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={handoffActionBusy}
+              className="min-h-11 justify-center rounded-xl px-3 active:bg-muted"
+              onPress={() => void retryHandoff()}
+            >
+              <Text className="text-sm font-semibold text-primary">
+                {ready ? "Regenerate" : "Retry"}
+              </Text>
+            </Pressable>
+          ) : null}
           {ready ? (
             <Pressable
               accessibilityRole="button"
@@ -471,37 +509,16 @@ function ThreadRouteContent(
             >
               <Text className="text-sm font-semibold text-primary-foreground">Start fresh</Text>
             </Pressable>
-          ) : failed ? (
-            <Pressable
-              accessibilityRole="button"
-              className="min-h-11 justify-center rounded-xl px-3 active:bg-muted"
-              onPress={() => {
-                if (!selectedThread || !selectedThreadDetail || !handoffSourceMessageId) return;
-                void prepareThreadHandoff({
-                  environmentId: selectedThread.environmentId,
-                  input: {
-                    threadId: selectedThreadDetail.id,
-                    sourceMessageId: handoffSourceMessageId,
-                    retry: true,
-                  },
-                });
-              }}
-            >
-              <Text className="text-sm font-semibold text-primary">Retry</Text>
-            </Pressable>
           ) : null}
         </View>
       </View>
     );
   }, [
     handoffActionBusy,
-    handoffSourceMessageId,
+    retryHandoff,
     handoffState,
     handoffSupported,
     keepFullHistory,
-    prepareThreadHandoff,
-    selectedThread,
-    selectedThreadDetail,
     startFresh,
   ]);
   const selectedThreadWithDraftSettings = useMemo(

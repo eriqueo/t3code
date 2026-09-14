@@ -6,6 +6,7 @@ import {
   ThreadHandoffActivityPayload,
   ThreadHandoffRequestedActivityPayload,
   type ModelSelection,
+  type MessageId,
   type OrchestrationEvent,
   ProviderDriverKind,
   type ProjectId,
@@ -1871,6 +1872,81 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const findInterruptedHandoffs = Effect.fn("findInterruptedHandoffs")(function* () {
+    const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    const pending = yield* Effect.forEach(readModel.threads, (thread) =>
+      Effect.gen(function* () {
+        if (thread.deletedAt !== null || thread.archivedAt !== null) return [];
+        const sourceMessageId = latestThreadUserMessageId(thread);
+        if (sourceMessageId === null) return [];
+        const activity = yield* projectionSnapshotQuery.getHandoffActivity({
+          threadId: thread.id,
+          sourceMessageId,
+        });
+        if (Option.isNone(activity) || !isHandoffRequestedPayload(activity.value.payload))
+          return [];
+        return [
+          { threadId: thread.id, requestId: activity.value.payload.requestId, sourceMessageId },
+        ];
+      }),
+    );
+    return pending.flat();
+  });
+
+  const clearInterruptedHandoffs = Effect.fn("clearInterruptedHandoffs")(function* (
+    pending: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly requestId: CommandId;
+      readonly sourceMessageId: MessageId;
+    }>,
+  ) {
+    yield* Effect.forEach(
+      pending,
+      (request) =>
+        Effect.gen(function* () {
+          const thread = yield* projectionSnapshotQuery.getThreadShellById(request.threadId);
+          if (
+            Option.isNone(thread) ||
+            thread.value.archivedAt !== null ||
+            thread.value.latestUserMessageId !== request.sourceMessageId
+          )
+            return;
+          const current = yield* projectionSnapshotQuery.getHandoffActivity(request);
+          if (
+            Option.isNone(current) ||
+            !isHandoffRequestedPayload(current.value.payload) ||
+            current.value.payload.requestId !== request.requestId
+          )
+            return;
+          yield* appendHandoffActivity({
+            threadId: request.threadId,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+            kind: THREAD_HANDOFF_ACTIVITY_KINDS.failed,
+            summary: "Handoff preparation was interrupted",
+            tone: "error",
+            payload: {
+              state: "failed",
+              requestId: request.requestId,
+              sourceMessageId: request.sourceMessageId,
+              code: "worker_interrupted",
+              detail:
+                "The server restarted before this handoff finished. Retry the handoff in this conversation.",
+            },
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("provider command reactor failed to clear interrupted handoff", {
+                  threadId: request.threadId,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        ),
+      { discard: true },
+    );
+  });
+
   const processHandoffRequested = Effect.fn("processHandoffRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.activity-appended" }>,
   ) {
@@ -2084,6 +2160,8 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.as([]));
       }),
     );
+    // Recovery requires durable state; refuse startup if pending work cannot be read.
+    const interruptedHandoffs = yield* findInterruptedHandoffs().pipe(Effect.orDie);
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         event.type === "thread.activity-appended" &&
@@ -2127,11 +2205,14 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    const clearPending = clearInterrupted.pipe(
+      Effect.andThen(clearInterruptedHandoffs(interruptedHandoffs)),
+    );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* clearInterrupted;
+      yield* clearPending;
     } else {
-      yield* forkParked(clearInterrupted);
+      yield* forkParked(clearPending);
     }
   });
 

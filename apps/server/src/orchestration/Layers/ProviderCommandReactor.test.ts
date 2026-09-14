@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  THREAD_HANDOFF_ACTIVITY_KINDS,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -174,6 +175,8 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly handoffBeforeStart?: "requested" | "dismissed";
+    readonly archiveHandoffBeforeStart?: boolean;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
@@ -575,6 +578,60 @@ describe("ProviderCommandReactor", () => {
           ),
           threadId,
           regenerateTitle: true,
+        }),
+      );
+    }
+
+    if (input?.handoffBeforeStart) {
+      await runEffect(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("seed-handoff-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("handoff-source"),
+            role: "user",
+            text: "Continue this work.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      for (const state of input.handoffBeforeStart === "requested"
+        ? (["requested"] as const)
+        : (["requested", "dismissed"] as const)) {
+        await runEffect(
+          engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make(`seed-handoff-${state}`),
+            threadId: ThreadId.make("thread-1"),
+            createdAt: now,
+            activity: {
+              id: EventId.make(`seed-handoff-${state}`),
+              kind: THREAD_HANDOFF_ACTIVITY_KINDS[state],
+              summary: "Seed historical handoff",
+              tone: "info",
+              turnId: null,
+              createdAt: now,
+              payload: {
+                state,
+                requestId: CommandId.make("interrupted-handoff"),
+                sourceMessageId: MessageId.make("handoff-source"),
+              },
+            },
+          }),
+        );
+      }
+    }
+
+    if (input?.archiveHandoffBeforeStart) {
+      await runEffect(
+        engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-handoff"),
+          threadId: ThreadId.make("thread-1"),
         }),
       );
     }
@@ -1853,6 +1910,50 @@ describe("ProviderCommandReactor", () => {
           (entry) => entry.id === asMessageId("user-message-before-long-title-regeneration"),
         )?.text,
     ).toBe(firstUserMessage);
+  });
+
+  it("fails an interrupted handoff on startup without loading message history", async () => {
+    const harness = await createHarness({
+      handoffBeforeStart: "requested",
+      unreadableHistory: true,
+    });
+    const activity = await harness.runEffect(
+      harness.snapshotQuery.getHandoffActivity({
+        threadId: ThreadId.make("thread-1"),
+        sourceMessageId: MessageId.make("handoff-source"),
+      }),
+    );
+    expect(Option.getOrNull(activity)?.payload).toMatchObject({
+      state: "failed",
+      code: "worker_interrupted",
+      requestId: "interrupted-handoff",
+      sourceMessageId: "handoff-source",
+    });
+  });
+
+  it("preserves an archived handoff on startup", async () => {
+    const harness = await createHarness({
+      handoffBeforeStart: "requested",
+      archiveHandoffBeforeStart: true,
+    });
+    const activity = await harness.runEffect(
+      harness.snapshotQuery.getHandoffActivity({
+        threadId: ThreadId.make("thread-1"),
+        sourceMessageId: MessageId.make("handoff-source"),
+      }),
+    );
+    expect(Option.getOrNull(activity)?.payload).toMatchObject({ state: "requested" });
+  });
+
+  it("preserves a resolved handoff on startup", async () => {
+    const harness = await createHarness({ handoffBeforeStart: "dismissed" });
+    const activity = await harness.runEffect(
+      harness.snapshotQuery.getHandoffActivity({
+        threadId: ThreadId.make("thread-1"),
+        sourceMessageId: MessageId.make("handoff-source"),
+      }),
+    );
+    expect(Option.getOrNull(activity)?.payload).toMatchObject({ state: "dismissed" });
   });
 
   it("clears title regeneration state left pending across reactor startup", async () => {

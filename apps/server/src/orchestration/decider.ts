@@ -1310,7 +1310,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       const previous = latestHandoffPayload(thread, command.sourceMessageId);
-      if (previous !== null && !(previous.state === "failed" && command.retry === true)) {
+      if (
+        previous !== null &&
+        !(command.retry === true && (previous.state === "failed" || previous.state === "ready"))
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "This conversation revision already has a handoff decision.",

@@ -6056,26 +6056,25 @@ export default function ChatView(props: ChatViewProps) {
     threadHandoffState.state,
   ]);
   const [handoffActionBusy, setHandoffActionBusy] = useState(false);
+  const handoffActionBusyRef = useRef(false);
   const continueWithFullConversation = useCallback(async () => {
-    if (!activeThread || !handoffSourceMessageId || handoffActionBusy) return;
+    if (!activeThread || !handoffSourceMessageId || handoffActionBusyRef.current) return;
+    handoffActionBusyRef.current = true;
     setHandoffActionBusy(true);
     const result = await dismissThreadHandoff({
       environmentId,
       input: { threadId: activeThread.id, sourceMessageId: handoffSourceMessageId },
     });
+    handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add({ type: "error", title: "Could not dismiss the handoff" });
     }
-  }, [
-    activeThread,
-    dismissThreadHandoff,
-    environmentId,
-    handoffActionBusy,
-    handoffSourceMessageId,
-  ]);
+  }, [activeThread, dismissThreadHandoff, environmentId, handoffSourceMessageId]);
   const continueInFreshConversation = useCallback(async () => {
-    if (!activeThread || threadHandoffState.state !== "ready" || handoffActionBusy) return;
+    if (!activeThread || threadHandoffState.state !== "ready" || handoffActionBusyRef.current)
+      return;
+    handoffActionBusyRef.current = true;
     setHandoffActionBusy(true);
     const targetThreadId = newThreadId();
     const result = await startThreadHandoff({
@@ -6096,14 +6095,38 @@ export default function ChatView(props: ChatViewProps) {
     } else if (!isAtomCommandInterrupted(result)) {
       toastManager.add({ type: "error", title: "Could not start the fresh conversation" });
     }
+    handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
+  }, [activeThread, environmentId, navigate, startThreadHandoff, threadHandoffState]);
+  const retryHandoff = useCallback(async () => {
+    if (
+      !activeThread ||
+      !handoffSourceMessageId ||
+      handoffActionBusyRef.current ||
+      (threadHandoffState.state !== "ready" && threadHandoffState.state !== "failed")
+    )
+      return;
+    handoffActionBusyRef.current = true;
+    setHandoffActionBusy(true);
+    const result = await prepareThreadHandoff({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        sourceMessageId: handoffSourceMessageId,
+        retry: true,
+      },
+    });
+    handoffActionBusyRef.current = false;
+    setHandoffActionBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: "Could not request a DX2 handoff" });
+    }
   }, [
     activeThread,
     environmentId,
-    handoffActionBusy,
-    navigate,
-    startThreadHandoff,
-    threadHandoffState,
+    threadHandoffState.state,
+    handoffSourceMessageId,
+    prepareThreadHandoff,
   ]);
   const contextHandoffBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -6133,17 +6156,8 @@ export default function ChatView(props: ChatViewProps) {
           <Button
             size="xs"
             variant="ghost"
-            onClick={() => {
-              if (!activeThread || !handoffSourceMessageId) return;
-              void prepareThreadHandoff({
-                environmentId,
-                input: {
-                  threadId: activeThread.id,
-                  sourceMessageId: handoffSourceMessageId,
-                  retry: true,
-                },
-              });
-            }}
+            disabled={handoffActionBusy}
+            onClick={() => void retryHandoff()}
           >
             Retry
           </Button>
@@ -6160,25 +6174,32 @@ export default function ChatView(props: ChatViewProps) {
       title: "Fresh-conversation handoff ready",
       description: "Start with compact operational memory instead of replaying this full thread",
       actions: (
-        <Button
-          size="xs"
-          disabled={handoffActionBusy}
-          onClick={() => void continueInFreshConversation()}
-        >
-          Start fresh
-        </Button>
+        <>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={handoffActionBusy}
+            onClick={() => void retryHandoff()}
+          >
+            Regenerate
+          </Button>
+          <Button
+            size="xs"
+            disabled={handoffActionBusy}
+            onClick={() => void continueInFreshConversation()}
+          >
+            Start fresh
+          </Button>
+        </>
       ),
       dismissLabel: "Keep full history",
       onDismiss: () => void continueWithFullConversation(),
     };
   }, [
-    activeThread,
     continueInFreshConversation,
     continueWithFullConversation,
-    environmentId,
     handoffActionBusy,
-    handoffSourceMessageId,
-    prepareThreadHandoff,
+    retryHandoff,
     supportsThreadContextHandoffs,
     threadHandoffState,
   ]);

@@ -166,10 +166,33 @@ it.layer(NodeServices.layer)("context handoff decider", (it) => {
       expect(message?.payload.text).not.toContain("Please finish the current task");
       expect(message?.payload.text).not.toContain("Current state");
       expect(message?.payload.text.endsWith(ready.payload.handoff)).toBe(true);
+
+      const changed = makeReadModel([ready], { commandSnapshot: true });
+      const thread = changed.threads[0]!;
+      for (const readModel of [
+        makeReadModel([{ ...ready, payload: { ...ready.payload, requestId: "replacement" } }]),
+        {
+          ...changed,
+          threads: [{ ...thread, latestUserMessageId: MessageId.make("new-user-message") }],
+        },
+      ]) {
+        const error = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.handoff.start",
+            commandId: CommandId.make("stale-start"),
+            threadId: ThreadId.make("thread-1"),
+            requestId: REQUEST,
+            targetThreadId: ThreadId.make("stale-target"),
+            createdAt: NOW,
+          },
+          readModel,
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }
     }),
   );
 
-  it.effect("rejects a ready packet after the conversation changes", () =>
+  it.effect("rejects preparation for an older conversation revision", () =>
     Effect.gen(function* () {
       const error = yield* decideOrchestrationCommand({
         command: {
@@ -183,5 +206,65 @@ it.layer(NodeServices.layer)("context handoff decider", (it) => {
       }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
+  );
+
+  it.effect(
+    "explicitly regenerates a ready report but rejects duplicate in-flight regeneration",
+    () =>
+      Effect.gen(function* () {
+        const ready: OrchestrationThread["activities"][number] = {
+          id: EventId.make("ready-for-regeneration"),
+          kind: "context-handoff.ready",
+          summary: "Ready",
+          tone: "info",
+          turnId: null,
+          createdAt: NOW,
+          payload: {
+            state: "ready",
+            requestId: REQUEST,
+            sourceMessageId: SOURCE,
+            handoff: "Old report",
+            elapsedMs: 1,
+            inputCharacters: 10,
+            outputCharacters: 10,
+          },
+        };
+        const command = {
+          type: "thread.handoff.prepare" as const,
+          commandId: CommandId.make("regenerate-report"),
+          threadId: ThreadId.make("thread-1"),
+          sourceMessageId: SOURCE,
+          retry: true as const,
+          createdAt: NOW,
+        };
+        const result = yield* decideOrchestrationCommand({
+          command,
+          readModel: makeReadModel([ready]),
+        });
+        const event = Array.isArray(result) ? result[0] : result;
+        expect(event.type).toBe("thread.activity-appended");
+        if (event.type !== "thread.activity-appended") return;
+        expect(event.payload.activity.payload).toMatchObject({
+          state: "requested",
+          requestId: command.commandId,
+        });
+        const error = yield* decideOrchestrationCommand({
+          command: { ...command, commandId: CommandId.make("duplicate-regeneration") },
+          readModel: makeReadModel([ready, event.payload.activity]),
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        const staleStart = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.handoff.start",
+            commandId: CommandId.make("start-replaced-report"),
+            threadId: ThreadId.make("thread-1"),
+            requestId: REQUEST,
+            targetThreadId: ThreadId.make("stale-target"),
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([ready, event.payload.activity]),
+        }).pipe(Effect.flip);
+        expect(staleStart._tag).toBe("OrchestrationCommandInvariantError");
+      }),
   );
 });
