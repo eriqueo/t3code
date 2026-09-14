@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { CommandId, EventId, MessageId } from "@t3tools/contracts";
 
 import {
+  CONTEXT_CHECKPOINT_START_MARKER,
+  CONTEXT_CHECKPOINT_END_MARKER,
+  MAX_CONTEXT_CHECKPOINT_CHARACTERS,
+  formatContextCheckpoint,
+  parseContextCheckpoint,
   deriveThreadHandoffState,
   latestThreadUserMessageId,
   threadHandoffSourceMessageId,
@@ -125,5 +130,89 @@ describe("context handoff policy", () => {
     ];
 
     expect(deriveThreadHandoffState(activities, SOURCE_MESSAGE_ID).state).toBe("ready");
+  });
+});
+
+describe("frontier context checkpoint envelope", () => {
+  it("transfers Unicode, quotes, and body whitespace exactly", () => {
+    const body = "\n# Checkpoint 🦊\n“Keep this quoted.”\n\nTrailing spaces  \n";
+    const packet = formatContextCheckpoint(body);
+    expect(packet).toBe(
+      `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}\n${CONTEXT_CHECKPOINT_END_MARKER}`,
+    );
+    expect(parseContextCheckpoint(packet)).toEqual({ state: "ready", body });
+    expect(parseContextCheckpoint(` \n${packet}\n\t`)).toEqual({
+      state: "ready",
+      body,
+    });
+  });
+
+  it.each([
+    ["Correction: do not deploy.\n", ""],
+    ["", "\nCorrection: tests failed after this checkpoint."],
+  ])("rejects operational text outside the envelope (%j, %j)", (prefix, suffix) => {
+    expect(
+      parseContextCheckpoint(prefix + formatContextCheckpoint("Recorded state") + suffix),
+    ).toEqual({ state: "invalid", reason: "malformed" });
+  });
+
+  it("leaves ordinary conversation outside the checkpoint protocol", () => {
+    expect(parseContextCheckpoint("The t3-context-checkpoint formatter is available.")).toEqual({
+      state: "none",
+    });
+  });
+
+  it("accepts the UTF-16 body ceiling without truncation and rejects one unit beyond", () => {
+    const body = "🦊".repeat(MAX_CONTEXT_CHECKPOINT_CHARACTERS / 2);
+    expect(parseContextCheckpoint(formatContextCheckpoint(body))).toEqual({ state: "ready", body });
+    expect(() => formatContextCheckpoint(body + "x")).toThrow(RangeError);
+    expect(
+      parseContextCheckpoint(
+        `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}x\n${CONTEXT_CHECKPOINT_END_MARKER}`,
+      ),
+    ).toEqual({ state: "invalid", reason: "oversized" });
+  });
+
+  it.each(["", " \n\t"])("rejects an empty or whitespace-only body (%j)", (body) => {
+    expect(() => formatContextCheckpoint(body)).toThrow(RangeError);
+    expect(
+      parseContextCheckpoint(
+        `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}\n${CONTEXT_CHECKPOINT_END_MARKER}`,
+      ),
+    ).toEqual({ state: "invalid", reason: "empty" });
+  });
+
+  it("rejects unknown protocol versions", () => {
+    expect(parseContextCheckpoint(formatContextCheckpoint("State").replace(":v1", ":v2"))).toEqual({
+      state: "invalid",
+      reason: "unsupported_version",
+    });
+  });
+
+  it.each([
+    CONTEXT_CHECKPOINT_START_MARKER + "\nMissing close",
+    "Missing open\n" + CONTEXT_CHECKPOINT_END_MARKER,
+    CONTEXT_CHECKPOINT_END_MARKER + "\nReversed\n" + CONTEXT_CHECKPOINT_START_MARKER,
+    CONTEXT_CHECKPOINT_START_MARKER + "Missing framing newline\n" + CONTEXT_CHECKPOINT_END_MARKER,
+    CONTEXT_CHECKPOINT_START_MARKER + "\nMissing framing newline" + CONTEXT_CHECKPOINT_END_MARKER,
+    CONTEXT_CHECKPOINT_START_MARKER.replace("-->", "") +
+      "\nBroken\n" +
+      CONTEXT_CHECKPOINT_END_MARKER,
+  ])("rejects malformed checkpoint envelopes (%j)", (packet) => {
+    expect(parseContextCheckpoint(packet)).toEqual({ state: "invalid", reason: "malformed" });
+  });
+
+  it("rejects nested or repeated markers instead of choosing a body", () => {
+    const packet = formatContextCheckpoint("State");
+    expect(parseContextCheckpoint(`${packet}\n${packet}`)).toEqual({
+      state: "invalid",
+      reason: "nested_markers",
+    });
+    expect(
+      parseContextCheckpoint(
+        `${CONTEXT_CHECKPOINT_START_MARKER}\n${packet}\n${CONTEXT_CHECKPOINT_END_MARKER}`,
+      ),
+    ).toEqual({ state: "invalid", reason: "nested_markers" });
+    expect(() => formatContextCheckpoint(packet)).toThrow(RangeError);
   });
 });

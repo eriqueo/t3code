@@ -449,7 +449,7 @@ function ThreadRouteContent(
     });
     handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
-    if (result._tag === "Failure") Alert.alert("Could not request a DX2 handoff", "Try again.");
+    if (result._tag === "Failure") Alert.alert("Could not request a handoff", "Try again.");
   }, [
     selectedThread,
     selectedThreadDetail,
@@ -467,10 +467,10 @@ function ThreadRouteContent(
       <View className="rounded-2xl border border-border bg-card px-4 py-3">
         <Text className="text-sm font-semibold text-foreground">
           {failed
-            ? "DX2 could not prepare the handoff"
+            ? "Could not prepare the handoff"
             : ready
               ? "Fresh-conversation handoff ready"
-              : "DX2 is preparing a compact handoff"}
+              : "Preparing context handoff"}
         </Text>
         <Text className="mt-1 text-xs leading-5 text-muted-foreground">
           {failed

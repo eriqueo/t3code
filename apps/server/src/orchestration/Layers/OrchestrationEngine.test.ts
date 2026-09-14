@@ -20,6 +20,12 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import {
+  formatContextCheckpoint,
+  CONTEXT_CHECKPOINT_START_MARKER,
+  CONTEXT_CHECKPOINT_END_MARKER,
+} from "@t3tools/shared/contextHandoff";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -28,6 +34,9 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+import { prepareContextHandoff } from "../contextHandoffWorker.ts";
+import type * as ProcessRunner from "../../processRunner.ts";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -142,7 +151,27 @@ describe("OrchestrationEngine", () => {
     const projectId = ProjectId.make("handoff-project");
     const sourceMessageId = MessageId.make("handoff-message");
     const requestId = CommandId.make("handoff-prepare");
-    const handoff = "# Operational handoff\n\nPreserve the bounded task and verify evidence.";
+    const checkpointBody = [
+      "# Operational handoff",
+      "## Objective",
+      "Preserve explicit provider-refusal reasons while keeping document transfers resumable.",
+      "## Permissions",
+      "Implementation and local tests are authorized. Do not merge, deploy, or retry customer files without a new decision.",
+      "## Current revision",
+      "Worktree: /workspace/provider-refusals; branch: fix/provider-refusals; recorded revision: 48a47f18. Recheck the current head before editing.",
+      "## Verification",
+      "Recorded checks passed on that revision. They are historical receipts, not verification of the current workspace.",
+      ...Array.from(
+        { length: 48 },
+        (_, index) =>
+          `Fixture ${index + 1}: refused uploads retain a typed provider reason; retry scheduling remains bounded, and uncertain writes retain their hold.`,
+      ),
+      "Production deployment and real provider recovery remain unverified.",
+      "## Next action",
+      "Confirm the current revision, review the final diff, and report the remaining deployment decision. Do not infer deployment approval from passing tests.",
+      "End of checkpoint: preserve this final instruction after restarting.",
+    ].join("\n\n");
+    expect(checkpointBody.length).toBeGreaterThan(4_000);
     const dispatch = (command: OrchestrationCommand) => system.run(system.engine.dispatch(command));
     try {
       await dispatch({
@@ -180,6 +209,38 @@ describe("OrchestrationEngine", () => {
         interactionMode: "default",
         createdAt: now(),
       });
+      const checkpointMessageId = MessageId.make("frontier-checkpoint");
+      await dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("checkpoint-delta"),
+        threadId,
+        messageId: checkpointMessageId,
+        delta: formatContextCheckpoint(checkpointBody),
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      await dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("checkpoint-complete"),
+        threadId,
+        messageId: checkpointMessageId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      const sourceThread = Option.getOrThrow(await system.readThread(threadId));
+      expect(sourceThread.messages.at(-1)?.id).toBe(checkpointMessageId);
+      // Deliberately omit ProcessRunner: entering the DX2 fallback must fail this
+      // integration, never spawn a subprocess or silently satisfy the test.
+      const prepared = await Effect.runPromiseWith(
+        Context.makeUnsafe<ProcessRunner.ProcessRunner>(new Map()),
+      )(
+        prepareContextHandoff({
+          cwd: directory,
+          title: sourceThread.title,
+          messages: sourceThread.messages,
+        }),
+      );
+      expect(prepared.handoff).toBe(checkpointBody);
+      expect(prepared.inputCharacters).toBe(0);
+      expect(prepared.elapsedMs).toBe(0);
       await dispatch({
         type: "thread.handoff.prepare",
         commandId: requestId,
@@ -203,10 +264,7 @@ describe("OrchestrationEngine", () => {
             state: "ready",
             requestId,
             sourceMessageId,
-            handoff,
-            elapsedMs: 1,
-            inputCharacters: 100,
-            outputCharacters: handoff.length,
+            ...prepared,
           },
         },
       });
@@ -275,7 +333,9 @@ describe("OrchestrationEngine", () => {
       });
       const successor = Option.getOrThrow(await system.readThread(targetThreadId));
       expect(successor.messages).toHaveLength(1);
-      expect(successor.messages[0]?.text).toContain(handoff);
+      expect(successor.messages[0]?.text).toContain(checkpointBody);
+      expect(successor.messages[0]?.text).not.toContain(CONTEXT_CHECKPOINT_START_MARKER);
+      expect(successor.messages[0]?.text).not.toContain(CONTEXT_CHECKPOINT_END_MARKER);
       expect(successor.messages[0]?.text).not.toContain("OLD HISTORY MUST NOT BE REPLAYED");
       expect(successor.runtimeMode).toBe("approval-required");
       const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));

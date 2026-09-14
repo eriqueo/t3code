@@ -14,6 +14,71 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+export const CONTEXT_CHECKPOINT_VERSION = 1;
+const CONTEXT_CHECKPOINT_MARKER_NAME = "t3-context-checkpoint";
+export const CONTEXT_CHECKPOINT_START_MARKER = `<!-- ${CONTEXT_CHECKPOINT_MARKER_NAME}:v${CONTEXT_CHECKPOINT_VERSION} -->`;
+export const CONTEXT_CHECKPOINT_END_MARKER = `<!-- /${CONTEXT_CHECKPOINT_MARKER_NAME} -->`;
+export const MAX_CONTEXT_CHECKPOINT_CHARACTERS = 12_000;
+
+export type ContextCheckpointResult =
+  | { readonly state: "none" }
+  | {
+      readonly state: "invalid";
+      readonly reason:
+        | "malformed"
+        | "unsupported_version"
+        | "oversized"
+        | "nested_markers"
+        | "empty";
+    }
+  | { readonly state: "ready"; readonly body: string };
+
+/** Validates the envelope only; the author owns the checkpoint's semantic accuracy. */
+export function parseContextCheckpoint(text: string): ContextCheckpointResult {
+  const markers = [
+    ...text.matchAll(new RegExp(`<!--\\s*\\/?\\s*${CONTEXT_CHECKPOINT_MARKER_NAME}\\b`, "g")),
+  ];
+  if (markers.length === 0) return { state: "none" };
+  if (markers.length > 2) return { state: "invalid", reason: "nested_markers" };
+  if (markers.length !== 2) return { state: "invalid", reason: "malformed" };
+  const start = markers[0]!.index;
+  const end = markers[1]!.index;
+  const opening = text.slice(start);
+  const version = new RegExp(`^<!-- ${CONTEXT_CHECKPOINT_MARKER_NAME}:v([^\\s>]+) -->`).exec(
+    opening,
+  )?.[1];
+  if (version !== undefined && version !== String(CONTEXT_CHECKPOINT_VERSION)) {
+    return { state: "invalid", reason: "unsupported_version" };
+  }
+  if (
+    !opening.startsWith(CONTEXT_CHECKPOINT_START_MARKER + "\n") ||
+    !text.startsWith(CONTEXT_CHECKPOINT_END_MARKER, end) ||
+    text[end - 1] !== "\n" ||
+    text.slice(0, start).trim().length > 0 ||
+    text.slice(end + CONTEXT_CHECKPOINT_END_MARKER.length).trim().length > 0
+  ) {
+    return { state: "invalid", reason: "malformed" };
+  }
+  // Remove exactly the formatter's two LF separators, never trim the body.
+  const body = text.slice(start + CONTEXT_CHECKPOINT_START_MARKER.length + 1, end - 1);
+  if (body.length > MAX_CONTEXT_CHECKPOINT_CHARACTERS)
+    return { state: "invalid", reason: "oversized" };
+  if (!body.trim()) return { state: "invalid", reason: "empty" };
+  return { state: "ready", body };
+}
+
+/** Emits one canonical envelope without truncating or normalizing the supplied Markdown. */
+export function formatContextCheckpoint(body: string): string {
+  const packet = `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}\n${CONTEXT_CHECKPOINT_END_MARKER}`;
+  const parsed = parseContextCheckpoint(packet);
+  if (parsed.state !== "ready") {
+    throw new RangeError(
+      `Invalid context checkpoint: ${parsed.state === "invalid" ? parsed.reason : "malformed"}`,
+    );
+  }
+  return packet;
+}
+
 export const THREAD_HANDOFF_IDLE_MS = 8 * 60 * 60 * 1_000;
 export const THREAD_HANDOFF_MIN_USED_TOKENS = 100_000;
 

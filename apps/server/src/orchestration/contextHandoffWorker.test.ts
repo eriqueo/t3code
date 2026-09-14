@@ -5,13 +5,18 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
+import {
+  formatContextCheckpoint,
+  CONTEXT_CHECKPOINT_START_MARKER,
+  CONTEXT_CHECKPOINT_END_MARKER,
+  MAX_CONTEXT_CHECKPOINT_CHARACTERS,
+} from "@t3tools/shared/contextHandoff";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
-  INPUT_REVIEW_HEADROOM,
   buildContextHandoffInput,
   buildContextHandoffPrompt,
   prepareContextHandoff,
@@ -321,7 +326,7 @@ it("sheds older whole user passages at the user reservation ceiling and disclose
   for (const record of retainedUsers)
     assert.strictEqual(record.text, users.find((m) => String(m.id) === record.source)!.text);
   assert.include(input.prompt, `omitted user passages: ${users.length - retainedUsers.length}`);
-  assert.isAtMost(input.prompt.length + INPUT_REVIEW_HEADROOM, 65_536);
+  assert.isAtMost(input.prompt.length, 65_536);
   assert.strictEqual(new Set(input.records.map((r) => r.id)).size, input.records.length);
   const ids = input.records.map((r) => Number(r.id.slice(1)));
   assert.deepEqual(
@@ -411,14 +416,10 @@ it.effect("labels clipped anchor tails and orders anchors by source message chro
   }),
 );
 
-const twoPassInput = {
+const fallbackInput = {
   cwd: "/workspace",
-  title: "Coverage audit",
-  messages: [
-    message("old", "assistant", "Earlier proposal.\n\nFinal receipt: build failed."),
-    message("user", "user", "Inspect only."),
-    message("last", "assistant", "Awaiting decision."),
-  ],
+  title: "Fallback",
+  messages: [message("one", "user", "Inspect only"), message("two", "assistant", "Waiting")],
 };
 const workerOutput = (result: string, elapsedMs = 7): ProcessRunner.ProcessRunOutput => ({
   stdout: encodeFixture({
@@ -438,119 +439,178 @@ const workerOutput = (result: string, elapsedMs = 7): ProcessRunner.ProcessRunOu
   stderrInvalidUtf8: false,
 });
 
-it.effect("audits the same bounded input twice and publishes only the replacement selection", () =>
+it.effect("copies the latest settled assistant checkpoint exactly without running DX2", () =>
   Effect.gen(function* () {
-    const calls: ProcessRunner.ProcessRunInput[] = [];
-    const input = {
-      ...twoPassInput,
-      messages: [...twoPassInput.messages, message("huge", "assistant", "x".repeat(100_000))],
-    };
-    const base = buildContextHandoffInput(input).prompt;
-    const result = yield* prepareContextHandoff(input).pipe(
+    const body =
+      " \n# Operational handoff\n\nFinal receipt: failed.\n" +
+      "😀".repeat(100) +
+      "x".repeat(10_000) +
+      "\n ";
+    let calls = 0;
+    const result = yield* prepareContextHandoff({
+      ...fallbackInput,
+      messages: [message("checkpoint", "assistant", "\n" + formatContextCheckpoint(body) + "\n ")],
+    }).pipe(
       Effect.provideService(
         ProcessRunner.ProcessRunner,
         ProcessRunner.ProcessRunner.of({
-          run: (call) => {
-            calls.push(call);
-            return Effect.succeed(
-              workerOutput(
-                encodeFixture({
-                  version: 1,
-                  passageIds: [calls.length === 1 ? "P1" : "P2"],
-                  ignored: "untrusted extras".repeat(1000),
-                }),
-                calls.length * 7,
-              ),
-            );
+          run: () => {
+            calls++;
+            return Effect.die("Checkpoint must not invoke DX2");
           },
         }),
       ),
     );
-    assert.strictEqual(calls.length, 2);
-    assert.strictEqual(calls[0]!.stdin, base);
-    assert.isTrue(calls[1]!.stdin!.startsWith(base));
-    assert.include(calls[1]!.stdin!, '"passageIds":["P1"]');
-    assert.notInclude(calls[1]!.stdin!, "untrusted extras");
-    assert.isTrue(calls.every((call) => call.stdin!.length <= 65_536));
-    assert.include(result.handoff, "> Final receipt: build failed.");
-    assert.notInclude(result.handoff, "> Earlier proposal.");
-    assert.strictEqual(result.elapsedMs, 21);
-    assert.strictEqual(
-      result.inputCharacters,
-      calls.reduce((n, call) => n + call.stdin!.length, 0),
-    );
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(result.handoff, body);
+    assert.strictEqual(result.inputCharacters, 0);
+    assert.strictEqual(result.outputCharacters, body.length);
+    assert.strictEqual(result.elapsedMs, 0);
   }),
 );
 
-it.effect("fails invalid first or second selections without retry or fallback", () =>
-  Effect.gen(function* () {
-    for (const invalidPass of [1, 2]) {
-      let calls = 0;
-      const failure = yield* prepareContextHandoff(twoPassInput).pipe(
-        Effect.provideService(
-          ProcessRunner.ProcessRunner,
-          ProcessRunner.ProcessRunner.of({
-            run: () => {
-              calls++;
-              return Effect.succeed(
-                workerOutput(
-                  encodeFixture({
-                    version: 1,
-                    passageIds: [calls === invalidPass ? "P999" : "P1"],
-                  }),
-                ),
-              );
-            },
-          }),
-        ),
-        Effect.flip,
+it.effect(
+  "rejects malformed unknown-version and oversized latest checkpoints without fallback",
+  () =>
+    Effect.gen(function* () {
+      const valid = formatContextCheckpoint("Snapshot");
+      const cases = [
+        [CONTEXT_CHECKPOINT_START_MARKER + "\nMissing end", "checkpoint_malformed"],
+        [valid.replace(":v1", ":v99"), "checkpoint_unsupported_version"],
+        [valid + "\nCorrection: do not deploy.", "checkpoint_malformed"],
+        ["Permission changed.\n" + valid, "checkpoint_malformed"],
+        [
+          CONTEXT_CHECKPOINT_START_MARKER +
+            "\n" +
+            "x".repeat(MAX_CONTEXT_CHECKPOINT_CHARACTERS + 1) +
+            "\n" +
+            CONTEXT_CHECKPOINT_END_MARKER,
+          "checkpoint_oversized",
+        ],
+      ];
+      for (const [text, code] of cases) {
+        let calls = 0;
+        const failure = yield* prepareContextHandoff({
+          ...fallbackInput,
+          messages: [message("checkpoint", "assistant", text!)],
+        }).pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            ProcessRunner.ProcessRunner.of({
+              run: () => {
+                calls++;
+                return Effect.succeed(
+                  workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] })),
+                );
+              },
+            }),
+          ),
+          Effect.flip,
+        );
+        assert.strictEqual(failure.code, code);
+        assert.strictEqual(calls, 0);
+      }
+    }),
+);
+
+it.effect(
+  "does not reuse checkpoints after newer user assistant system blank or streaming messages",
+  () =>
+    Effect.gen(function* () {
+      const checkpoint = message(
+        "checkpoint",
+        "assistant",
+        formatContextCheckpoint("Old snapshot"),
       );
-      assert.strictEqual(failure.code, "invalid_source_reference");
-      assert.strictEqual(calls, invalidPass);
-    }
-  }),
+      const newer: OrchestrationMessage[] = [
+        message("new-user", "user", "Correction"),
+        message("new-assistant", "assistant", "New outcome"),
+        { ...message("system", "assistant", "System update"), role: "system" },
+        message("blank", "assistant", ""),
+        {
+          ...message("streaming", "assistant", formatContextCheckpoint("Unfinished snapshot")),
+          streaming: true,
+        },
+      ];
+      for (const last of newer) {
+        let calls = 0;
+        const input = { ...fallbackInput, messages: [checkpoint, last] };
+        const result = yield* prepareContextHandoff(input).pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            ProcessRunner.ProcessRunner.of({
+              run: () => {
+                calls++;
+                return Effect.succeed(
+                  workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] })),
+                );
+              },
+            }),
+          ),
+        );
+        assert.strictEqual(calls, 1);
+        assert.notStrictEqual(result.handoff, "Old snapshot");
+        assert.notStrictEqual(result.handoff, "Unfinished snapshot");
+        assert.strictEqual(result.inputCharacters, buildContextHandoffInput(input).prompt.length);
+        assert.strictEqual(result.elapsedMs, 7);
+      }
+    }),
 );
 
-it.effect("shares one deadline and interrupts the second pass at the remaining limit", () =>
+it.effect("interrupts the single fallback worker at ten minutes", () =>
   Effect.gen(function* () {
-    const firstStarted = yield* Deferred.make<void>();
-    const finishFirst = yield* Deferred.make<void>();
-    const secondStarted = yield* Deferred.make<void>();
-    const secondStopped = yield* Deferred.make<void>();
-    const calls: ProcessRunner.ProcessRunInput[] = [];
-    const fiber = yield* prepareContextHandoff(twoPassInput).pipe(
+    const started = yield* Deferred.make<void>();
+    const stopped = yield* Deferred.make<void>();
+    let calls = 0;
+    const fiber = yield* prepareContextHandoff(fallbackInput).pipe(
       Effect.provideService(
         ProcessRunner.ProcessRunner,
         ProcessRunner.ProcessRunner.of({
           run: (call) => {
-            calls.push(call);
-            return calls.length === 1
-              ? Deferred.succeed(firstStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(finishFirst)),
-                  Effect.as(workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] }))),
-                )
-              : Deferred.succeed(secondStarted, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.ensuring(Deferred.succeed(secondStopped, undefined)),
-                );
+            calls++;
+            assert.strictEqual(Duration.toMillis(Duration.fromInputUnsafe(call.timeout!)), 600_000);
+            return Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Deferred.succeed(stopped, undefined)),
+            );
           },
         }),
       ),
       Effect.result,
       Effect.forkScoped,
     );
-    yield* Deferred.await(firstStarted);
-    yield* TestClock.adjust("4 minutes");
-    yield* Deferred.succeed(finishFirst, undefined);
-    yield* Deferred.await(secondStarted);
-    assert.strictEqual(Duration.toMillis(Duration.fromInputUnsafe(calls[1]!.timeout!)), 360_000);
-    yield* TestClock.adjust("6 minutes");
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("10 minutes");
     const result = yield* Fiber.join(fiber);
     assert.isTrue(Result.isFailure(result));
     if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "worker_timeout");
-    yield* Deferred.await(secondStopped);
-    assert.strictEqual(calls.length, 2);
+    yield* Deferred.await(stopped);
+    assert.strictEqual(calls, 1);
   }).pipe(Effect.scoped),
+);
+
+it.effect("preserves typed fallback-worker failure without retry", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const failure = yield* prepareContextHandoff(fallbackInput).pipe(
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: () => {
+            calls++;
+            return Effect.succeed({
+              ...workerOutput(""),
+              code: ChildProcessSpawner.ExitCode(1),
+              stderr: encodeFixture({ code: "model_unavailable", detail: "Unavailable" }),
+            });
+          },
+        }),
+      ),
+      Effect.flip,
+    );
+    assert.strictEqual(failure.code, "model_unavailable");
+    assert.strictEqual(calls, 1);
+  }),
 );
 
 it.effect("carries packing and omitted-user disclosure into the rendered report", () =>
@@ -568,37 +628,5 @@ it.effect("carries packing and omitted-user disclosure into the rendered report"
     );
     const disclosure = input.prompt.split("\n").find((line) => line.startsWith("Packing:"))!;
     assert.include(handoff, disclosure);
-  }),
-);
-
-it.effect("preserves a typed audit-worker failure without publishing the first pass", () =>
-  Effect.gen(function* () {
-    let calls = 0;
-    const failure = yield* prepareContextHandoff(twoPassInput).pipe(
-      Effect.provideService(
-        ProcessRunner.ProcessRunner,
-        ProcessRunner.ProcessRunner.of({
-          run: () => {
-            calls++;
-            return Effect.succeed(
-              calls === 1
-                ? workerOutput(encodeFixture({ version: 1, passageIds: ["P1"] }))
-                : {
-                    ...workerOutput(""),
-                    code: ChildProcessSpawner.ExitCode(1),
-                    stderr: encodeFixture({
-                      code: "model_unavailable",
-                      detail: "Audit unavailable",
-                    }),
-                  },
-            );
-          },
-        }),
-      ),
-      Effect.flip,
-    );
-    assert.strictEqual(failure.code, "model_unavailable");
-    assert.strictEqual(failure.detail, "Audit unavailable");
-    assert.strictEqual(calls, 2);
   }),
 );

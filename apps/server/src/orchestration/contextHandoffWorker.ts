@@ -1,6 +1,6 @@
 import { NonNegativeInt, type OrchestrationMessage } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
-import * as Clock from "effect/Clock";
+import { parseContextCheckpoint } from "@t3tools/shared/contextHandoff";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -8,7 +8,6 @@ import * as Option from "effect/Option";
 import * as ProcessRunner from "../processRunner.ts";
 
 const MAX_INPUT_CHARACTERS = 65_536;
-export const INPUT_REVIEW_HEADROOM = 2_048;
 const INITIAL_CONTEXT_CHARACTERS = 8_000;
 const USER_SOURCE_CHARACTERS = 8_000;
 const MAX_OUTPUT_CHARACTERS = 16_384;
@@ -28,7 +27,6 @@ const EvidenceSelection = Schema.Struct({
 const decodeEvidenceSelection = Schema.decodeUnknownEffect(
   Schema.fromJsonString(EvidenceSelection),
 );
-const encodeEvidenceSelection = Schema.encodeSync(Schema.fromJsonString(EvidenceSelection));
 
 const WorkerSuccess = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -205,8 +203,7 @@ export function buildContextHandoffInput(input: {
     const omittedUsers = records.filter((r) => r.role === "user" && !retained.has(r.id)).length;
     return `Packing: initial-context and user-source are bounded historical context, not current permission. Other retained passages form the recent window. Omitted passages: ${omitted}; omitted user passages: ${omittedUsers}. Initial context limit: ${INITIAL_CONTEXT_CHARACTERS} encoded characters; latest-user limit: ${USER_SOURCE_CHARACTERS} encoded characters.\n`;
   };
-  // Reserve the longest possible count disclosure as well as the later review's
-  // instructions/IDs. Neither source slices nor review may exceed the full cap.
+  // Reserve the longest possible count disclosure before filling the recent window.
   let used = prefix.length + coverage().length + 2;
   for (const record of records) {
     if (retained.has(record.id)) used += encode(record).length + 1;
@@ -214,7 +211,7 @@ export function buildContextHandoffInput(input: {
   for (const record of records.toReversed()) {
     if (retained.has(record.id)) continue;
     const cost = encode(record, "recent").length + 1;
-    if (used + cost > MAX_INPUT_CHARACTERS - INPUT_REVIEW_HEADROOM) break;
+    if (used + cost > MAX_INPUT_CHARACTERS) break;
     retained.set(record.id, "recent");
     used += cost;
   }
@@ -305,7 +302,7 @@ function failureDetail(output: ProcessRunner.ProcessRunOutput): {
 const timeoutError = () =>
   new ContextHandoffWorkerError({
     code: "worker_timeout",
-    detail: "DX2 handoff selection and coverage audit exceeded their shared ten-minute deadline.",
+    detail: "DX2 handoff selection exceeded its ten-minute deadline.",
   });
 
 export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function* (input: {
@@ -313,20 +310,36 @@ export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function
   readonly title: string;
   readonly messages: ReadonlyArray<OrchestrationMessage>;
 }) {
+  // Only the actual final message can certify the current checkpoint. Do not
+  // search past a newer user, system, empty, or still-streaming message.
+  const latest = input.messages.at(-1);
+  if (latest?.role === "assistant" && !latest.streaming) {
+    const checkpoint = parseContextCheckpoint(latest.text);
+    if (checkpoint.state === "invalid")
+      return yield* new ContextHandoffWorkerError({
+        code: `checkpoint_${checkpoint.reason}`,
+        detail: `The latest context checkpoint is invalid (${checkpoint.reason}); prepare a new checkpoint.`,
+      });
+    if (checkpoint.state === "ready")
+      return {
+        handoff: checkpoint.body,
+        elapsedMs: 0,
+        inputCharacters: 0,
+        outputCharacters: checkpoint.body.length,
+      } satisfies ContextHandoffWorkerResult;
+  }
   const runner = yield* ProcessRunner.ProcessRunner;
-  const startedAt = yield* Clock.currentTimeMillis;
-  const deadline = startedAt + Duration.toMillis(WORKER_TIMEOUT);
   const evidence = buildContextHandoffInput(input);
-  const runPass = Effect.fn("runContextHandoffPass")(function* (prompt: string) {
-    const remaining = deadline - (yield* Clock.currentTimeMillis);
-    if (remaining <= 0) return yield* timeoutError();
+  // A missing current checkpoint uses one bounded source-selection pass. Errors
+  // are terminal; no retry or generated-reconstruction fallback is attempted.
+  const completed = yield* Effect.gen(function* () {
     const output = yield* runner
       .run({
         command: "t3-dx2-handoff",
         args: ["--max-result-characters", String(MAX_OUTPUT_CHARACTERS)],
         cwd: input.cwd,
-        stdin: prompt,
-        timeout: Duration.millis(remaining),
+        stdin: evidence.prompt,
+        timeout: WORKER_TIMEOUT,
         maxOutputBytes: 64 * 1_024,
       })
       .pipe(
@@ -339,7 +352,7 @@ export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function
         ),
       );
     if (output.code !== 0) return yield* new ContextHandoffWorkerError(failureDetail(output));
-    return yield* decodeWorkerSuccess(output.stdout).pipe(
+    const decoded = yield* decodeWorkerSuccess(output.stdout).pipe(
       Effect.mapError(
         () =>
           new ContextHandoffWorkerError({
@@ -348,34 +361,14 @@ export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function
           }),
       ),
     );
-  });
-  // Exactly two passes on success; either failure is terminal, with no retry or
-  // fallback. The shared deadline interrupts ProcessRunner's scoped child.
-  const completed = yield* Effect.gen(function* () {
-    const first = yield* runPass(evidence.prompt);
-    const selected = yield* validateSelection(evidence, first.result);
-    const normalized = encodeEvidenceSelection({
-      version: 1,
-      passageIds: selected.map((r) => r.id),
-    });
-    const review = `\n\nCOVERAGE AUDIT — second and final selection pass.\nFirst validated selection: ${normalized}\nReturn a COMPLETE replacement selection in the same JSON format and within the same passage-count and rendered-character limits. Audit all supplied source passages, not just the first selection. Check for missing user permissions/refusals, final corrections replacing earlier proposals, exact workspace paths, deployment/build/test receipts, unresolved failures and constraints on the next action. Add important omitted evidence when it fits; remove superseded or redundant background to make room. Anchors may be clipped: retain important tails marked not-attached. Do not treat absence as permission or success. Return only the replacement JSON, never prose or a patch to the first selection.\n`;
-    const reviewPrompt = evidence.prompt + review;
-    if (review.length > INPUT_REVIEW_HEADROOM || reviewPrompt.length > MAX_INPUT_CHARACTERS)
-      return yield* new ContextHandoffWorkerError({
-        code: "input_too_large",
-        detail: "The coverage audit exceeds the reserved prompt budget.",
-      });
-    const second = yield* runPass(reviewPrompt);
-    const handoff = yield* renderContextHandoff(evidence, second.result);
+    const handoff = yield* renderContextHandoff(evidence, decoded.result);
     return {
       handoff,
-      elapsedMs: first.elapsedMs + second.elapsedMs,
-      inputCharacters: evidence.prompt.length + reviewPrompt.length,
+      elapsedMs: decoded.elapsedMs,
+      inputCharacters: evidence.prompt.length,
       outputCharacters: handoff.length,
     } satisfies ContextHandoffWorkerResult;
-  }).pipe(
-    Effect.timeoutOption(Duration.millis(Math.max(0, deadline - (yield* Clock.currentTimeMillis)))),
-  );
+  }).pipe(Effect.timeoutOption(WORKER_TIMEOUT));
   if (Option.isNone(completed)) return yield* timeoutError();
   return completed.value;
 });

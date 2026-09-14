@@ -6038,7 +6038,7 @@ export default function ChatView(props: ChatViewProps) {
     }).then((result) => {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         requestedHandoffKeysRef.current.delete(key);
-        toastManager.add({ type: "error", title: "Could not request a DX2 handoff" });
+        toastManager.add({ type: "error", title: "Could not request a handoff" });
       }
     });
   }, [
@@ -6119,7 +6119,7 @@ export default function ChatView(props: ChatViewProps) {
     handoffActionBusyRef.current = false;
     setHandoffActionBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      toastManager.add({ type: "error", title: "Could not request a DX2 handoff" });
+      toastManager.add({ type: "error", title: "Could not request a handoff" });
     }
   }, [
     activeThread,
@@ -6139,7 +6139,7 @@ export default function ChatView(props: ChatViewProps) {
         id: `context-handoff:${threadHandoffState.payload.requestId}`,
         variant: "info",
         icon: <Minimize2Icon />,
-        title: "DX2 is preparing a fresh-conversation handoff",
+        title: "Preparing context handoff",
         description: "You can keep working here while it runs",
         dismissLabel: "Keep full history",
         onDismiss: () => void continueWithFullConversation(),
@@ -6150,7 +6150,7 @@ export default function ChatView(props: ChatViewProps) {
         id: `context-handoff:${threadHandoffState.payload.requestId}`,
         variant: "error",
         icon: <Minimize2Icon />,
-        title: "DX2 could not prepare the handoff",
+        title: "Could not prepare the handoff",
         description: threadHandoffState.payload.detail,
         actions: (
           <Button
