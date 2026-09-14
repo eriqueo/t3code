@@ -79,6 +79,7 @@ import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   deriveThreadHandoffState,
   shouldPrepareThreadHandoff,
+  latestContextCheckpoint,
   threadHandoffSourceMessageId,
 } from "@t3tools/shared/contextHandoff";
 import { uuidv4 } from "../../lib/uuid";
@@ -327,6 +328,10 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const hasExplicitCheckpoint = useMemo(
+    () => latestContextCheckpoint(selectedThreadDetail?.messages ?? []).state !== "none",
+    [selectedThreadDetail?.messages],
+  );
   const handoffSourceMessageId = threadHandoffSourceMessageId(selectedThread);
   const handoffState = useMemo(
     () =>
@@ -345,6 +350,7 @@ function ThreadRouteContent(
     if (
       handoffRequestedRef.current === requestKey ||
       !shouldPrepareThreadHandoff({
+        hasExplicitCheckpoint,
         snapshotCurrent: selectedThreadDetailState.status === "live",
         nowMs: Date.now(),
         latestMessageAt: selectedThread.latestUserMessageAt,
@@ -365,6 +371,7 @@ function ThreadRouteContent(
       if (result._tag === "Failure") handoffRequestedRef.current = null;
     });
   }, [
+    hasExplicitCheckpoint,
     handoffSourceMessageId,
     handoffState.state,
     handoffSupported,

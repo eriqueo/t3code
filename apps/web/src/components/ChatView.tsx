@@ -76,6 +76,7 @@ import { truncate } from "@t3tools/shared/String";
 import {
   deriveThreadHandoffState,
   shouldPrepareThreadHandoff,
+  latestContextCheckpoint,
   threadHandoffSourceMessageId,
 } from "@t3tools/shared/contextHandoff";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -5999,6 +6000,10 @@ export default function ChatView(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
+  const hasExplicitCheckpoint = useMemo(
+    () => latestContextCheckpoint(activeThread?.messages ?? []).state !== "none",
+    [activeThread?.messages],
+  );
   const handoffSourceMessageId = threadHandoffSourceMessageId(routeServerThreadShell);
   const threadHandoffState = useMemo(
     () =>
@@ -6012,7 +6017,7 @@ export default function ChatView(props: ChatViewProps) {
     if (
       !supportsThreadContextHandoffs ||
       !activeThread ||
-      !activeContextWindow ||
+      (!activeContextWindow && !hasExplicitCheckpoint) ||
       !handoffSourceMessageId
     )
       return;
@@ -6020,10 +6025,11 @@ export default function ChatView(props: ChatViewProps) {
     if (
       requestedHandoffKeysRef.current.has(key) ||
       !shouldPrepareThreadHandoff({
+        hasExplicitCheckpoint,
         snapshotCurrent: threadSyncPhase === null,
         nowMs: Date.parse(`${nowMinute}:00.000Z`),
         latestMessageAt: routeServerThreadShell?.latestUserMessageAt ?? null,
-        usedTokens: activeContextWindow.usedTokens,
+        usedTokens: activeContextWindow?.usedTokens ?? null,
         sessionStatus: activeThread.session?.status ?? null,
         latestTurnState: activeThread.latestTurn?.state ?? null,
         hasPendingRequest: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
@@ -6042,6 +6048,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     });
   }, [
+    hasExplicitCheckpoint,
     activeContextWindow,
     activeThread,
     environmentId,

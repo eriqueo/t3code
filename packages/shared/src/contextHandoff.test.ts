@@ -9,6 +9,7 @@ import {
   parseContextCheckpoint,
   deriveThreadHandoffState,
   latestThreadUserMessageId,
+  latestContextCheckpoint,
   threadHandoffSourceMessageId,
   shouldPrepareThreadHandoff,
 } from "./contextHandoff.ts";
@@ -16,6 +17,79 @@ import {
 const SOURCE_MESSAGE_ID = MessageId.make("message-2");
 
 describe("context handoff policy", () => {
+  const freshCheckpointPolicy = {
+    snapshotCurrent: true,
+    nowMs: Date.parse("2026-09-12T08:00:01.000Z"),
+    latestMessageAt: "2026-09-12T08:00:00.000Z",
+    usedTokens: null,
+    sessionStatus: "idle" as const,
+    latestTurnState: "completed" as const,
+    hasPendingRequest: false,
+    handoffState: "none" as const,
+    hasExplicitCheckpoint: true,
+  };
+
+  it("prepares an explicit fresh checkpoint without token telemetry or an overnight wait", () => {
+    expect(shouldPrepareThreadHandoff(freshCheckpointPolicy)).toBe(true);
+    expect(shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, usedTokens: 10 })).toBe(true);
+    expect(
+      shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, hasExplicitCheckpoint: false }),
+    ).toBe(false);
+  });
+
+  it.each([
+    { snapshotCurrent: false },
+    { sessionStatus: "starting" as const },
+    { sessionStatus: "running" as const },
+    { latestTurnState: "running" as const },
+    { hasPendingRequest: true },
+    { handoffState: "requested" as const },
+    { handoffState: "ready" as const },
+    { handoffState: "failed" as const },
+    { handoffState: "dismissed" as const },
+    { handoffState: "started" as const },
+  ])("preserves handoff safety gates for explicit checkpoints (%j)", (gate) => {
+    expect(shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, ...gate })).toBe(false);
+  });
+
+  it("requests malformed explicit checkpoints so the worker can report the failure", () => {
+    const checkpoint = latestContextCheckpoint([
+      {
+        role: "assistant",
+        streaming: false,
+        text: CONTEXT_CHECKPOINT_START_MARKER + "\nIncomplete",
+      },
+    ]);
+    expect(checkpoint.state).toBe("invalid");
+    expect(
+      shouldPrepareThreadHandoff({
+        ...freshCheckpointPolicy,
+        hasExplicitCheckpoint: checkpoint.state !== "none",
+      }),
+    ).toBe(true);
+  });
+
+  it("detects only the actual latest settled assistant checkpoint", () => {
+    const checkpoint = {
+      role: "assistant" as const,
+      streaming: false,
+      text: formatContextCheckpoint("Current state"),
+    };
+    expect(latestContextCheckpoint([checkpoint])).toEqual({
+      state: "ready",
+      body: "Current state",
+    });
+    for (const newer of [
+      { role: "user" as const, streaming: false, text: "New task" },
+      { role: "system" as const, streaming: false, text: "New state" },
+      { ...checkpoint, streaming: true },
+      { ...checkpoint, text: "" },
+      { ...checkpoint, text: "More recent assistant response" },
+    ])
+      expect(latestContextCheckpoint([checkpoint, newer])).toEqual({ state: "none" });
+    expect(latestContextCheckpoint([])).toEqual({ state: "none" });
+  });
+
   it("offers one handoff for an expensive thread after an overnight pause", () => {
     expect(
       shouldPrepareThreadHandoff({

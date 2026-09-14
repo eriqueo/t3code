@@ -1,6 +1,6 @@
 import { NonNegativeInt, type OrchestrationMessage } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
-import { parseContextCheckpoint } from "@t3tools/shared/contextHandoff";
+import { latestContextCheckpoint } from "@t3tools/shared/contextHandoff";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -310,24 +310,19 @@ export const prepareContextHandoff = Effect.fn("prepareContextHandoff")(function
   readonly title: string;
   readonly messages: ReadonlyArray<OrchestrationMessage>;
 }) {
-  // Only the actual final message can certify the current checkpoint. Do not
-  // search past a newer user, system, empty, or still-streaming message.
-  const latest = input.messages.at(-1);
-  if (latest?.role === "assistant" && !latest.streaming) {
-    const checkpoint = parseContextCheckpoint(latest.text);
-    if (checkpoint.state === "invalid")
-      return yield* new ContextHandoffWorkerError({
-        code: `checkpoint_${checkpoint.reason}`,
-        detail: `The latest context checkpoint is invalid (${checkpoint.reason}); prepare a new checkpoint.`,
-      });
-    if (checkpoint.state === "ready")
-      return {
-        handoff: checkpoint.body,
-        elapsedMs: 0,
-        inputCharacters: 0,
-        outputCharacters: checkpoint.body.length,
-      } satisfies ContextHandoffWorkerResult;
-  }
+  const checkpoint = latestContextCheckpoint(input.messages);
+  if (checkpoint.state === "invalid")
+    return yield* new ContextHandoffWorkerError({
+      code: `checkpoint_${checkpoint.reason}`,
+      detail: `The latest context checkpoint is invalid (${checkpoint.reason}); prepare a new checkpoint.`,
+    });
+  if (checkpoint.state === "ready")
+    return {
+      handoff: checkpoint.body,
+      elapsedMs: 0,
+      inputCharacters: 0,
+      outputCharacters: checkpoint.body.length,
+    } satisfies ContextHandoffWorkerResult;
   const runner = yield* ProcessRunner.ProcessRunner;
   const evidence = buildContextHandoffInput(input);
   // A missing current checkpoint uses one bounded source-selection pass. Errors

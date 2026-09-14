@@ -67,6 +67,20 @@ export function parseContextCheckpoint(text: string): ContextCheckpointResult {
   return { state: "ready", body };
 }
 
+/** Never search past a newer user, system, empty, or streaming message. */
+export function latestContextCheckpoint(
+  messages: ReadonlyArray<{
+    readonly role: "user" | "assistant" | "system";
+    readonly streaming: boolean;
+    readonly text: string;
+  }>,
+): ContextCheckpointResult {
+  const latest = messages.at(-1);
+  return latest?.role === "assistant" && !latest.streaming
+    ? parseContextCheckpoint(latest.text)
+    : { state: "none" };
+}
+
 /** Emits one canonical envelope without truncating or normalizing the supplied Markdown. */
 export function formatContextCheckpoint(body: string): string {
   const packet = `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}\n${CONTEXT_CHECKPOINT_END_MARKER}`;
@@ -136,6 +150,7 @@ export function deriveThreadHandoffState(
 
 export function shouldPrepareThreadHandoff(input: {
   readonly snapshotCurrent: boolean;
+  readonly hasExplicitCheckpoint?: boolean;
   readonly nowMs: number;
   readonly latestMessageAt: string | null;
   readonly usedTokens: number | null;
@@ -149,6 +164,9 @@ export function shouldPrepareThreadHandoff(input: {
   if (input.hasPendingRequest) return false;
   if (input.sessionStatus === "starting" || input.sessionStatus === "running") return false;
   if (input.latestTurnState === "running") return false;
+  // An explicit frontier checkpoint is ready for transfer immediately after the
+  // turn settles; age and token thresholds apply only to automatic excerpts.
+  if (input.hasExplicitCheckpoint === true) return true;
   if ((input.usedTokens ?? 0) < THREAD_HANDOFF_MIN_USED_TOKENS) return false;
 
   const latestMessageAt = Date.parse(input.latestMessageAt ?? "");
