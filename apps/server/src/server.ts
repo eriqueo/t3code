@@ -1,3 +1,5 @@
+import { logicalProjectsHttpApiLayer } from "./workspace/logicalProjectsHttp.ts";
+import * as LogicalProjects from "./workspace/LogicalProjects.ts";
 import {
   EnvironmentHttpApi,
   ProviderDriverKind,
@@ -601,6 +603,11 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(
+        logicalProjectsHttpApiLayer.pipe(
+          Layer.provide(LogicalProjects.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        ),
+      ),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),

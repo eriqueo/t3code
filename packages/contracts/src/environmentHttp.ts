@@ -1,3 +1,12 @@
+import {
+  LogicalProjectRegisterInput,
+  LogicalProjectListInput,
+  LogicalProjectResolveInput,
+  LogicalProjectRegistration,
+  LogicalProjectPage,
+  LogicalProjectResolution,
+  LogicalProjectError,
+} from "./logicalProjects.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -614,9 +623,36 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+export class EnvironmentLogicalProjectsHttpApi extends HttpApiGroup.make("logicalProjects")
+  .add(
+    HttpApiEndpoint.post("register", "/api/logical-projects/register", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectRegisterInput,
+      success: LogicalProjectRegistration,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("list", "/api/logical-projects/list", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectListInput,
+      success: LogicalProjectPage,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("resolve", "/api/logical-projects/resolve", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectResolveInput,
+      success: LogicalProjectResolution,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentLogicalProjectsHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

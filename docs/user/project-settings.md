@@ -55,3 +55,28 @@ with its configured upstream. Choose an environment to set the default or a proj
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Record logical projects from the CLI
+
+Use logical projects to distinguish ongoing work inside a shared project folder. The running
+server stores these records; the CLI refuses registration when the server is unavailable.
+This currently records ownership only. It does not move conversations, assign writers, create
+checkouts, or change the client sidebar.
+
+Create a record without guessing which checkout it should own:
+
+```sh
+t3 logical-project register '{"version":1,"requestId":"register-cloud-1","projectId":"<existing-project-id>","logicalProjectId":"datax-cloud","title":"Cloud Engine","decision":"create"}'
+t3 logical-project list '{"projectId":"<existing-project-id>"}'
+```
+
+Keep the same request ID when retrying the same registration. Changing its contents requires
+a new request ID. List results include a `next` cursor; pass it as `after` to read the next page.
+
+`t3 logical-project resolve '{"projectId":"<existing-project-id>","checkoutPath":"/absolute/checkout"}'`
+checks a checkout's Git identity and returns associated project candidates. These are advisory
+repository matches, not semantic matching or permission to start work. An explicit registration
+may include `adoption` with that `checkoutPath` and the returned `identity` as `expected`; use
+`decision: "reuse"` to bind another repository to an existing logical project. Competing owners
+and changed checkout identities are rejected. Records are retained; retirement is not yet
+available through these commands.
