@@ -2,9 +2,12 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import { checkoutInspectionEnvironment } from "../../workspace/LogicalProjects.ts";
 
 import {
   THREAD_HANDOFF_ACTIVITY_KINDS,
+  TestRunReceipt,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -13,6 +16,7 @@ import {
   ProviderSetupError,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { formatContextCheckpoint } from "@t3tools/shared/contextHandoff";
 import {
   ApprovalRequestId,
   CommandId,
@@ -34,8 +38,10 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+const encodeTestReceipt = Schema.encodeEffect(Schema.fromJsonString(TestRunReceipt));
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -169,6 +175,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly workspaceRoot?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -501,7 +508,8 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    const runEffect = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+      runtime!.runPromise(effect);
 
     await Effect.runPromise(
       engine.dispatch({
@@ -509,7 +517,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot: input?.workspaceRoot ?? "/tmp/provider-project",
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -1911,6 +1919,191 @@ describe("ProviderCommandReactor", () => {
         )?.text,
     ).toBe(firstUserMessage);
   });
+
+  it.each(["unavailable", "observed"] as const)(
+    "persists %s workspace evidence beside the exact checkpoint and transfers it to the successor",
+    async (state) => {
+      const directory = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-handoff-observation-"),
+      );
+      createdBaseDirs.add(directory);
+      const workspaceRoot = NodePath.join(directory, "checkout");
+      if (state === "observed") {
+        NodeChildProcess.execFileSync(
+          "git",
+          [
+            "-c",
+            `core.hooksPath=${NodeOS.devNull}`,
+            "init",
+            "--initial-branch=receipt",
+            workspaceRoot,
+          ],
+          {
+            env: {
+              ...process.env,
+              ...checkoutInspectionEnvironment(process.env),
+              GIT_CONFIG_NOSYSTEM: "1",
+              GIT_CONFIG_GLOBAL: NodeOS.devNull,
+            },
+          },
+        );
+        NodeFS.writeFileSync(NodePath.join(workspaceRoot, "private-file"), "not in receipt");
+      }
+      const harness = await createHarness({ workspaceRoot });
+      const threadId = ThreadId.make("thread-1");
+      const sourceMessageId = MessageId.make("observation-source");
+      const requestId = CommandId.make("observation-request");
+      await harness.runEffect(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const json = yield* encodeTestReceipt({
+            version: 1,
+            input: {
+              version: 1,
+              requestId: "recorded-test",
+              threadId,
+              command: "node",
+              args: ["private-test-argument"],
+              timeoutSeconds: 5,
+            },
+            actorSessionId: "fixture",
+            cwd: workspaceRoot,
+            reservedAt: "2026-01-01T00:00:00.000Z",
+            deadlineAt: "2026-01-01T00:03:00.000Z",
+            state: "completed",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            exitedAt: "2026-01-01T00:00:01.000Z",
+            completedAt: "2026-01-01T00:00:01.000Z",
+            exitCode: 9,
+            reason: null,
+            before: null,
+            after: null,
+            revisionValidity: "unknown",
+            releasedBy: null,
+          });
+          yield* sql`INSERT INTO test_runs VALUES('recorded-test','{}',${workspaceRoot},0,${json})`;
+        }),
+      );
+      const body = "# Checkpoint\n\nDo not deploy. Tests are unverified.";
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("observation-turn"),
+          threadId,
+          message: {
+            messageId: sourceMessageId,
+            role: "user",
+            text: "Save a checkpoint",
+            attachments: [],
+          },
+          interactionMode: "default",
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.drain();
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("observation-delta"),
+          threadId,
+          messageId: MessageId.make("observation-checkpoint"),
+          delta: formatContextCheckpoint(body),
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make("observation-complete"),
+          threadId,
+          messageId: MessageId.make("observation-checkpoint"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: requestId,
+          threadId,
+          createdAt: "2026-01-01T00:00:02.000Z",
+          activity: {
+            id: EventId.make("observation-requested"),
+            kind: THREAD_HANDOFF_ACTIVITY_KINDS.requested,
+            summary: "Prepare checkpoint",
+            tone: "info",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:02.000Z",
+            payload: { state: "requested", requestId, sourceMessageId },
+          },
+        }),
+      );
+      await harness.drain();
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId)!;
+      const ready = thread.activities.findLast(
+        (activity) => activity.kind === THREAD_HANDOFF_ACTIVITY_KINDS.ready,
+      );
+      expect(ready?.payload).toMatchObject({
+        handoff: body,
+        inputCharacters: 0,
+        elapsedMs: 0,
+        runtimeObservation: {
+          version: 1,
+          state: "observed",
+          sourceRevision: "unknown",
+          backend: { pid: process.pid, nodeVersion: process.version },
+        },
+        testEvidence: {
+          version: 1,
+          state: "collected",
+          sourceThreadId: threadId,
+          currentValidity: "unknown",
+          items: [
+            {
+              requestId: "recorded-test",
+              exitCode: 9,
+              checkoutPathMatchesPreparation: state === "observed" ? true : null,
+            },
+          ],
+          hasMore: false,
+        },
+        workspaceObservation:
+          state === "unavailable"
+            ? { version: 1, state, code: "invalid_checkout" }
+            : { version: 1, state, branch: "receipt", head: null, dirty: true, cwd: workspaceRoot },
+      });
+      const targetThreadId = ThreadId.make("observation-successor");
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.handoff.start",
+          commandId: CommandId.make("observation-start"),
+          threadId,
+          requestId,
+          targetThreadId,
+          createdAt: "2026-01-02T00:00:00.000Z",
+        }),
+      );
+      await harness.drain();
+      const successor = (await harness.readModel()).threads.find(
+        (entry) => entry.id === targetThreadId,
+      )!;
+      expect(successor.messages[0]?.text).toContain(body);
+      expect(successor.messages[0]?.text).toContain("Current validity is unknown");
+      expect(successor.messages[0]?.text).toContain(
+        "This workspace observation does not collect tests or runtime evidence",
+      );
+      expect(successor.messages[0]?.text).toContain(
+        state === "unavailable" ? '"code":"invalid_checkout"' : '"branch":"receipt"',
+      );
+      expect(successor.messages[0]?.text).not.toContain("private-file");
+      expect(successor.messages[0]?.text).toContain("## T3 historical test receipts");
+      expect(successor.messages[0]?.text).toContain('"requestId":"recorded-test"');
+      expect(successor.messages[0]?.text).toContain('"exitCode":9');
+      expect(successor.messages[0]?.text).not.toContain("private-test-argument");
+      expect(successor.messages[0]?.text).toContain("## T3 backend and local boot observation");
+      expect(successor.messages[0]?.text).toContain('"sourceRevision":"unknown"');
+    },
+  );
 
   it("fails an interrupted handoff on startup without loading message history", async () => {
     const harness = await createHarness({

@@ -265,6 +265,30 @@ describe("OrchestrationEngine", () => {
             requestId,
             sourceMessageId,
             ...prepared,
+            runtimeObservation: {
+              version: 1,
+              state: "unavailable",
+              collectedAt: now(),
+              code: "timed_out",
+            },
+            testEvidence: {
+              version: 1,
+              state: "unavailable",
+              collectedAt: now(),
+              code: "read_failed",
+            },
+            workspaceObservation: {
+              version: 1,
+              state: "observed",
+              startedAt: now(),
+              completedAt: now(),
+              cwd: directory,
+              commonDirectory: `${directory}/.git`,
+              branch: "recorded-branch",
+              head: "a".repeat(40),
+              dirty: true,
+              statusDigest: "b".repeat(64),
+            },
           },
         },
       });
@@ -334,6 +358,12 @@ describe("OrchestrationEngine", () => {
       const successor = Option.getOrThrow(await system.readThread(targetThreadId));
       expect(successor.messages).toHaveLength(1);
       expect(successor.messages[0]?.text).toContain(checkpointBody);
+      expect(successor.messages[0]?.text).toContain('"branch":"recorded-branch"');
+      expect(successor.messages[0]?.text).toContain('"code":"read_failed"');
+      expect(successor.messages[0]?.text).toContain("## T3 historical test receipts");
+      expect(successor.messages[0]?.text).toContain("## T3 backend and local boot observation");
+      expect(successor.messages[0]?.text).toContain('"code":"timed_out"');
+      expect(successor.messages[0]?.text).toContain("Current validity is unknown");
       expect(successor.messages[0]?.text).not.toContain(CONTEXT_CHECKPOINT_START_MARKER);
       expect(successor.messages[0]?.text).not.toContain(CONTEXT_CHECKPOINT_END_MARKER);
       expect(successor.messages[0]?.text).not.toContain("OLD HISTORY MUST NOT BE REPLAYED");

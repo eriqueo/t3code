@@ -66,6 +66,9 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { prepareContextHandoff } from "../contextHandoffWorker.ts";
+import { makeHandoffWorkspaceObserver } from "../../workspace/HandoffWorkspace.ts";
+import { makeHandoffTestCollector } from "../../workspace/TestRunReceipts.ts";
+import { makeHandoffRuntimeObserver } from "../../workspace/HandoffRuntime.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
@@ -339,6 +342,9 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
+  const observeHandoffWorkspace = yield* makeHandoffWorkspaceObserver;
+  const collectHandoffTests = yield* makeHandoffTestCollector;
+  const observeHandoffRuntime = yield* makeHandoffRuntimeObserver;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
@@ -2000,6 +2006,18 @@ const make = Effect.gen(function* () {
     const result = yield* Effect.result(
       prepareContextHandoff({ cwd, title: thread.title, messages: thread.messages }),
     );
+    const workspaceObservation = Result.isFailure(result)
+      ? undefined
+      : yield* observeHandoffWorkspace(cwd);
+    const testEvidence = Result.isFailure(result)
+      ? undefined
+      : yield* collectHandoffTests(
+          thread.id,
+          workspaceObservation?.state === "observed" ? workspaceObservation.cwd : null,
+        );
+    const runtimeObservation = Result.isFailure(result)
+      ? undefined
+      : yield* observeHandoffRuntime();
     const completedAt = DateTime.formatIso(yield* DateTime.now);
     const currentThread = yield* projectionSnapshotQuery.getThreadDetailById(thread.id, {
       activityKinds: Object.values(THREAD_HANDOFF_ACTIVITY_KINDS),
@@ -2043,6 +2061,9 @@ const make = Effect.gen(function* () {
         requestId: request.requestId,
         sourceMessageId: request.sourceMessageId,
         ...result.success,
+        ...(workspaceObservation ? { workspaceObservation } : {}),
+        ...(testEvidence ? { testEvidence } : {}),
+        ...(runtimeObservation ? { runtimeObservation } : {}),
       },
     });
   });

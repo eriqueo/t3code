@@ -2,11 +2,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { CommandId, MessageId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  HandoffWorkspaceObservation,
+  ThreadHandoffReadyActivityPayload,
   type ChatImageAttachment,
   ClientOrchestrationCommand,
   ModelSelection,
@@ -36,6 +38,50 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+const isHandoffWorkspaceObservation = Schema.is(HandoffWorkspaceObservation);
+
+it.effect(
+  "keeps historical ready payloads readable and validates versioned workspace evidence",
+  () =>
+    Effect.gen(function* () {
+      const legacy = {
+        state: "ready",
+        requestId: CommandId.make("request"),
+        sourceMessageId: MessageId.make("source"),
+        handoff: "Checkpoint",
+        elapsedMs: 0,
+        inputCharacters: 0,
+        outputCharacters: 10,
+      } as const;
+      const observation = {
+        version: 1,
+        state: "observed",
+        startedAt: "2026-09-14T00:00:00.000Z",
+        completedAt: "2026-09-14T00:00:01.000Z",
+        cwd: "/workspace",
+        commonDirectory: "/workspace/.git",
+        branch: "main",
+        head: "a".repeat(40),
+        dirty: false,
+        statusDigest: "b".repeat(64),
+      } as const;
+      const decode = Schema.decodeUnknownEffect(ThreadHandoffReadyActivityPayload);
+      assert.deepEqual(yield* decode(legacy), legacy);
+      assert.deepEqual(yield* decode({ ...legacy, workspaceObservation: observation }), {
+        ...legacy,
+        workspaceObservation: observation,
+      });
+      for (const invalid of [
+        { ...observation, version: 2 },
+        { ...observation, head: "not-a-commit" },
+        { ...observation, statusDigest: "clipped" },
+        { ...observation, cwd: "x".repeat(4097) },
+        { ...observation, branch: "x".repeat(1025) },
+        { ...observation, state: "unavailable", code: "invented" },
+      ])
+        assert.isFalse(isHandoffWorkspaceObservation(invalid));
+    }),
+);
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);

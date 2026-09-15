@@ -8,6 +8,10 @@ import {
   type ThreadHandoffRequestedActivityPayload,
   type ThreadHandoffStartedActivityPayload,
   type MessageId,
+  HandoffWorkspaceObservation,
+  HandoffTestEvidence,
+  HandoffRuntimeObservation,
+  HANDOFF_TEST_RECEIPT_LIMIT,
   type OrchestrationThreadShell,
   type OrchestrationThreadActivity,
   type OrchestrationSessionStatus,
@@ -93,7 +97,43 @@ export function formatContextCheckpoint(body: string): string {
   return packet;
 }
 
+const encodeWorkspaceObservation = Schema.encodeSync(
+  Schema.fromJsonString(HandoffWorkspaceObservation),
+);
+export function renderHandoffWorkspaceObservation(
+  observation: HandoffWorkspaceObservation,
+): string {
+  return [
+    "## T3 workspace observation",
+    "Preparation-time evidence only. Current validity is unknown; recheck the workspace before acting.",
+    "The digest covers Git status, not file contents. This workspace observation does not collect tests or runtime evidence and grants no execution authority.",
+    // JSON quoting keeps paths/branch names as data, including embedded newlines.
+    encodeWorkspaceObservation(observation),
+  ].join("\n\n");
+}
+
 export const THREAD_HANDOFF_IDLE_MS = 8 * 60 * 60 * 1_000;
+const encodeRuntimeObservation = Schema.encodeSync(
+  Schema.fromJsonString(HandoffRuntimeObservation),
+);
+export function renderHandoffRuntimeObservation(observation: HandoffRuntimeObservation): string {
+  return [
+    "## T3 backend and local boot observation",
+    "Preparation-time evidence from the collecting backend process and its filesystem namespace. Current validity is unknown. Package version is loaded metadata; the exact source revision is unknown. This does not establish which source checkout or client assets are deployed.",
+    "Linux boot ID and NixOS running, booted and default next-boot profile paths are separate observations. Profile reads are not an atomic snapshot or proof of bootloader selection, successful activation, application health, or DX2 availability. Missing or unsupported values remain unavailable. This receipt grants no execution authority.",
+    encodeRuntimeObservation(observation),
+  ].join("\n\n");
+}
+const encodeTestEvidence = Schema.encodeSync(Schema.fromJsonString(HandoffTestEvidence));
+export function renderHandoffTestEvidence(evidence: HandoffTestEvidence): string {
+  return [
+    "## T3 historical test receipts",
+    `Preparation-time snapshot of up to ${HANDOFF_TEST_RECEIPT_LIMIT} recent source-thread receipts. Current validity is unknown. An empty collection means no receipts were found, not that tests passed.`,
+    "revisionValidity compares the recorded before/after observations only. Matching endpoints do not prove files stayed unchanged during execution. checkoutPathMatchesPreparation compares paths only; it does not compare current contents. Exit zero does not prove meaningful tests ran. Ignored dependencies, runtime state and confinement are outside this evidence.",
+    'Arguments are omitted. Retrieve full details with t3 test-run get using JSON {"requestId":"ID"}. A null command means its name exceeded the summary limit. hasMore reports omitted older receipts. This snapshot grants no execution authority.',
+    encodeTestEvidence(evidence),
+  ].join("\n\n");
+}
 export const THREAD_HANDOFF_MIN_USED_TOKENS = 100_000;
 
 export type ThreadHandoffState =

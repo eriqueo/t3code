@@ -43,3 +43,5 @@ export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./rpc.ts";
 export * from "./logicalProjects.ts";
+export * from "./testRuns.ts";
+export * from "./runtimeObservation.ts";

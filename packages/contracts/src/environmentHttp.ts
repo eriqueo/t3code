@@ -7,6 +7,13 @@ import {
   LogicalProjectResolution,
   LogicalProjectError,
 } from "./logicalProjects.ts";
+import {
+  TestRunInput,
+  TestRunLookup,
+  TestRunRelease,
+  TestRunReceipt,
+  TestRunError,
+} from "./testRuns.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -649,10 +656,37 @@ export class EnvironmentLogicalProjectsHttpApi extends HttpApiGroup.make("logica
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentTestRunsHttpApi extends HttpApiGroup.make("testRuns")
+  .add(
+    HttpApiEndpoint.post("run", "/api/test-runs/run", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunInput,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("get", "/api/test-runs/get", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunLookup,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("release", "/api/test-runs/release", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunRelease,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentLogicalProjectsHttpApi)
+  .add(EnvironmentTestRunsHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

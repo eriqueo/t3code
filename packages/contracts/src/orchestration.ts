@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import { HandoffTestEvidence } from "./testRuns.ts";
+import { HandoffRuntimeObservation } from "./runtimeObservation.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -612,6 +614,37 @@ export const ThreadHandoffRequestedActivityPayload = Schema.Struct({
 export type ThreadHandoffRequestedActivityPayload =
   typeof ThreadHandoffRequestedActivityPayload.Type;
 
+const HandoffWorkspaceObservationBase = {
+  version: Schema.Literal(1),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime,
+};
+// CRITICAL: retained with the parent ready activity; no independent store or history.
+// The digest identifies porcelain status, not file contents or test validity.
+export const HandoffWorkspaceObservation = Schema.Union([
+  Schema.Struct({
+    ...HandoffWorkspaceObservationBase,
+    state: Schema.Literal("observed"),
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    commonDirectory: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    branch: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(1_024))),
+    head: Schema.NullOr(Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))),
+    dirty: Schema.Boolean,
+    statusDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  }),
+  Schema.Struct({
+    ...HandoffWorkspaceObservationBase,
+    state: Schema.Literal("unavailable"),
+    code: Schema.Literals([
+      "invalid_checkout",
+      "inspection_failed",
+      "changed_during_observation",
+      "timed_out",
+    ]),
+  }),
+]);
+export type HandoffWorkspaceObservation = typeof HandoffWorkspaceObservation.Type;
+
 export const ThreadHandoffReadyActivityPayload = Schema.Struct({
   ...ThreadHandoffActivityBase,
   state: Schema.Literal("ready"),
@@ -619,6 +652,10 @@ export const ThreadHandoffReadyActivityPayload = Schema.Struct({
   elapsedMs: NonNegativeInt,
   inputCharacters: NonNegativeInt,
   outputCharacters: NonNegativeInt,
+  // Optional permanently: persisted activities from earlier builds have no observation.
+  workspaceObservation: Schema.optional(HandoffWorkspaceObservation),
+  testEvidence: Schema.optional(HandoffTestEvidence),
+  runtimeObservation: Schema.optional(HandoffRuntimeObservation),
 });
 export type ThreadHandoffReadyActivityPayload = typeof ThreadHandoffReadyActivityPayload.Type;
 

@@ -23,7 +23,12 @@ import {
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
-import { latestThreadUserMessageId } from "@t3tools/shared/contextHandoff";
+import {
+  latestThreadUserMessageId,
+  renderHandoffWorkspaceObservation,
+  renderHandoffTestEvidence,
+  renderHandoffRuntimeObservation,
+} from "@t3tools/shared/contextHandoff";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -1399,7 +1404,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       const prompt =
         "Continue from this compact operational handoff. Verify workspace and code claims before acting.\n\n" +
-        ready.handoff;
+        ready.handoff +
+        (ready.workspaceObservation
+          ? "\n\n" + renderHandoffWorkspaceObservation(ready.workspaceObservation)
+          : "") +
+        (ready.testEvidence ? "\n\n" + renderHandoffTestEvidence(ready.testEvidence) : "") +
+        (ready.runtimeObservation
+          ? "\n\n" + renderHandoffRuntimeObservation(ready.runtimeObservation)
+          : "");
       return yield* decideCommandSequence({
         readModel,
         commands: [

@@ -29,6 +29,15 @@ const encodeFingerprint = Schema.encodeEffect(
 const failure = (code: LogicalProjectError["code"]) => new LogicalProjectError({ code });
 const storageFailure = () => failure("storage_failed");
 
+export const checkoutInspectionEnvironment = (environment: NodeJS.ProcessEnv) => ({
+  ...Object.fromEntries(
+    Object.keys(environment)
+      .filter((key) => key.startsWith("GIT_"))
+      .map((key) => [key, undefined]),
+  ),
+  GIT_OPTIONAL_LOCKS: "0",
+});
+
 // Read-only Git inspection. Common-directory realpath distinguishes independent clones
 // while sharing identity across linked worktrees. Umbrella paths impose no ancestry rule.
 export const makeCheckoutInspector = Effect.gen(function* () {
@@ -36,11 +45,7 @@ export const makeCheckoutInspector = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner;
   // Composition boundary: explicitly clear all ambient Git routing/config variables.
-  const gitEnvironment = Object.fromEntries(
-    Object.keys(process.env)
-      .filter((key) => key.startsWith("GIT_"))
-      .map((key) => [key, undefined]),
-  );
+  const gitEnvironment = checkoutInspectionEnvironment(process.env);
   return Effect.fn("LogicalProjects.inspect")(function* (checkoutPath: string) {
     const canonical = yield* fs
       .realPath(checkoutPath)

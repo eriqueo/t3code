@@ -15,6 +15,21 @@ import { LogicalProjectCliUnavailable, runLogicalProjectCommand } from "./logica
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))(
   "logical project CLI live-only",
   (it) => {
+    it.effect("test-run CLI refuses offline execution and creates no run store", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const error = yield* Command.runWith(makeCli(), { version: "test" })([
+          "test-run",
+          "run",
+          "--base-dir",
+          home,
+          '{"version":1,"requestId":"r","threadId":"t","command":"node","args":["--version"],"timeoutSeconds":5}',
+        ]).pipe(Effect.flip);
+        assert.instanceOf(error, LogicalProjectCliUnavailable);
+        assert.isFalse(yield* fs.exists(`${home}/userdata/state.sqlite`));
+      }),
+    );
     it.effect(
       "runs the production registration command without a live server and leaves no offline store",
       () =>
