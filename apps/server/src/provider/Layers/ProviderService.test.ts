@@ -2770,7 +2770,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("stops stale sessions in other providers after a successful replacement start", () =>
+  it.effect("stops stale sessions before starting a replacement provider", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-provider-replacement");
@@ -2785,6 +2785,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       routing.codex.stopSession.mockClear();
       routing.claude.stopSession.mockClear();
+      routing.claude.startSession.mockClear();
 
       const claudeSession = yield* provider.startSession(threadId, {
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -2798,6 +2799,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(claudeSession.provider, "claudeAgent");
       assert.deepEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
       assert.equal(routing.claude.stopSession.mock.calls.length, 0);
+      assert.isBelow(
+        routing.codex.stopSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        routing.claude.startSession.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
+      );
 
       const sessions = yield* provider.listSessions();
       assert.deepEqual(
