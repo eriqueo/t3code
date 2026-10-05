@@ -49,6 +49,7 @@ import {
   ClockIcon,
   EyeIcon,
   FolderIcon,
+  FoldersIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -121,7 +122,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -154,6 +155,8 @@ import {
   applySidebarThreadDrop,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  buildSidebarProjectScopeItems,
+  type SidebarProjectScopeItem,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
@@ -2522,15 +2525,10 @@ export default function Sidebar() {
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
+  const projectSections = useClientSettings((s) => s.sidebarProjectSections);
   const projectScopeItems = useMemo(
-    () => [
-      { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
-        value: project.projectKey,
-        label: project.displayName,
-      })),
-    ],
-    [projectGroups],
+    () => buildSidebarProjectScopeItems({ projects: projectGroups, sections: projectSections }),
+    [projectGroups, projectSections],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2543,12 +2541,11 @@ export default function Sidebar() {
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
     [projectGroups],
   );
-  const selectedProjectScopeItem = useMemo(
-    () =>
-      projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all")) ??
-      projectScopeItems[0]!,
+  const matchedProjectScopeItem = useMemo(
+    () => projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all")) ?? null,
     [projectScopeItems, projectScopeKey],
   );
+  const selectedProjectScopeItem = matchedProjectScopeItem ?? projectScopeItems[0]!;
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -2570,33 +2567,51 @@ export default function Sidebar() {
       }),
     [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
   );
-  const scopedProjectGroup = useMemo(
-    () =>
-      projectScopeKey === null
-        ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
-  );
-  const scopedProjectKeys = useMemo(
-    () =>
-      scopedProjectGroup === null
-        ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
+  // A single scoped project, for the trigger icon. A section scope has none.
+  const scopedProjectGroup =
+    matchedProjectScopeItem?.kind === "project"
+      ? (projectGroupByScopeKey.get(matchedProjectScopeItem.value) ?? null)
+      : null;
+  const scopeLabel = projectScopeKey === null ? null : (matchedProjectScopeItem?.label ?? null);
+  const scopedProjectKeys = useMemo(() => {
+    if (matchedProjectScopeItem === null || matchedProjectScopeItem.kind === "all") return null;
+    const groupKeys =
+      matchedProjectScopeItem.kind === "section"
+        ? matchedProjectScopeItem.projectKeys
+        : [matchedProjectScopeItem.value];
+    return new Set(
+      groupKeys.flatMap(
+        (key) =>
+          projectGroupByScopeKey
+            .get(key)
+            ?.memberProjectRefs.map(
               (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
-  );
-  // A persisted scope whose project is gone falls back to all projects, but
-  // only after every catalog environment has a live project snapshot. Cached
-  // or disconnected environments cannot establish that the project is gone.
+            ) ?? [],
+      ),
+    );
+  }, [matchedProjectScopeItem, projectGroupByScopeKey]);
+  // A persisted scope whose project or section is gone falls back to all
+  // projects, but only after every catalog environment has a live project
+  // snapshot and section assignments have loaded. Cached or disconnected
+  // environments cannot establish that it is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const clientSettingsHydrated = useClientSettingsHydrated();
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    if (
+      projectScopeKey !== null &&
+      allProjectSnapshotsReady &&
+      clientSettingsHydrated &&
+      matchedProjectScopeItem === null
+    ) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    clientSettingsHydrated,
+    projectScopeKey,
+    matchedProjectScopeItem,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -4563,7 +4578,7 @@ export default function Sidebar() {
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
-                <Combobox
+                <Combobox<SidebarProjectScopeItem>
                   items={projectScopeItems}
                   filteredItems={filteredProjectScopeItems}
                   autoHighlight
@@ -4591,8 +4606,8 @@ export default function Sidebar() {
                     render={
                       <SidebarHeaderIconButton
                         label={
-                          scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+                          scopeLabel
+                            ? `Filter threads by project: ${scopeLabel}`
                             : "Filter threads by project"
                         }
                       />
@@ -4604,6 +4619,8 @@ export default function Sidebar() {
                       <span className="flex shrink-0">
                         <ProjectFavicon project={scopedProjectGroup} className="size-4" />
                       </span>
+                    ) : matchedProjectScopeItem?.kind === "section" ? (
+                      <FoldersIcon className="size-4" />
                     ) : (
                       <FolderIcon className="size-4" />
                     )}
@@ -4652,13 +4669,33 @@ export default function Sidebar() {
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number]) => {
+                        if (item.kind === "section") {
+                          return (
+                            <ComboboxItem
+                              key={item.value}
+                              hideIndicator
+                              value={item}
+                              className="h-8 min-h-8 py-0 font-semibold"
+                              contentClassName="flex min-w-0 items-center gap-2"
+                            >
+                              <FoldersIcon className="size-4 shrink-0" />
+                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                {item.projectKeys.length}
+                              </span>
+                            </ComboboxItem>
+                          );
+                        }
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         return (
                           <ComboboxItem
                             key={item.value}
                             hideIndicator
                             value={item}
-                            className="h-8 min-h-8 py-0 font-medium"
+                            className={cn(
+                              "h-8 min-h-8 py-0 font-medium",
+                              item.kind === "project" && item.inSection && "ps-6",
+                            )}
                             contentClassName="flex min-w-0 items-center gap-2"
                             onContextMenu={(event) => {
                               if (project) handleProjectSettings(event, project);
@@ -5172,8 +5209,8 @@ export default function Sidebar() {
                     <span className={compact ? "sr-only" : undefined}>Add project</span>
                   </button>
                 </>
-              ) : compact ? null : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : compact ? null : scopeLabel ? (
+                `No threads in ${scopeLabel} yet`
               ) : (
                 "No threads yet"
               )}

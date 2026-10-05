@@ -60,6 +60,10 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`chat.scrollToEnd` (default `ctrl+end`) jumps the timeline to the latest message
+and resumes following new output. It takes precedence over moving the composer
+caret to the end of the draft.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

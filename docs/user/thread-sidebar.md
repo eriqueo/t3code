@@ -107,6 +107,13 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Group projects into sections
+
+On web and desktop, set a project's **Section** in its project settings, such as
+`work` or `personal`. The sidebar project filter then lists each section above its
+projects. Select a section to show threads from every project in it. Clear the
+field to remove the project from its section.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads

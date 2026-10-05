@@ -6695,6 +6695,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.scrollToEnd") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.restoreAfterTimelineReachedEnd();
+        scrollToEnd(true);
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -6751,6 +6759,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
+    scrollToEnd,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
