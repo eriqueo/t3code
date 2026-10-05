@@ -110,9 +110,10 @@ The linked pull request participates in automatic settlement.
 ## Group projects into sections
 
 On web and desktop, set a project's **Section** in its project settings, such as
-`work` or `personal`. The sidebar project filter then lists each section above its
-projects. Select a section to show threads from every project in it. Clear the
-field to remove the project from its section.
+`work` or `personal`. Active threads from that project then appear under a
+collapsible section heading in the sidebar, below threads from unsectioned
+projects. The project filter also lists each section, so you can show only the
+threads in one section. Clear the field to remove the project from its section.
 
 ## Find and reference work
 

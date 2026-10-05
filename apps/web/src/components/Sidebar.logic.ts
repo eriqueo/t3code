@@ -108,7 +108,57 @@ export type SidebarListMarker =
   /** The boundary between pinned and active rows. */
   | "pinned-divider"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  /** A user-named project section heading inside the active rows. Drop
+      resolution ignores it, so the rows around it stay one active section. */
+  | SidebarProjectSectionMarker;
+
+export type SidebarProjectSectionMarker = `project-section:${string}`;
+
+export function sidebarProjectSectionMarker(section: string): SidebarProjectSectionMarker {
+  return `project-section:${section}`;
+}
+
+export function isSidebarProjectSectionMarker(
+  marker: SidebarListMarker,
+): marker is SidebarProjectSectionMarker {
+  return marker.startsWith("project-section:");
+}
+
+export function compareSidebarProjectSections(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
+/**
+ * Splits active rows by project section, keeping each group's incoming order.
+ * Unsectioned rows come first with no heading; sections follow alphabetically.
+ */
+export function groupSidebarThreadsBySection<T>(
+  threads: readonly T[],
+  sectionOf: (thread: T) => string | null,
+): {
+  readonly unsectioned: readonly T[];
+  readonly sections: ReadonlyArray<{ readonly name: string; readonly threads: readonly T[] }>;
+} {
+  const unsectioned: T[] = [];
+  const bySection = new Map<string, T[]>();
+  for (const thread of threads) {
+    const section = sectionOf(thread);
+    if (section === null) {
+      unsectioned.push(thread);
+      continue;
+    }
+    const members = bySection.get(section);
+    if (members) members.push(thread);
+    else bySection.set(section, [thread]);
+  }
+  return {
+    unsectioned,
+    sections: [...bySection.keys()]
+      .toSorted(compareSidebarProjectSections)
+      .map((name) => ({ name, threads: bySection.get(name)! })),
+  };
+}
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
@@ -933,9 +983,7 @@ export function buildSidebarProjectScopeItems(input: {
   }
 
   const items: SidebarProjectScopeItem[] = [{ kind: "all", value: "all", label: "All projects" }];
-  const sectionNames = [...projectsBySection.keys()].toSorted((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: "base" }),
-  );
+  const sectionNames = [...projectsBySection.keys()].toSorted(compareSidebarProjectSections);
   for (const section of sectionNames) {
     const members = projectsBySection.get(section)!;
     items.push({

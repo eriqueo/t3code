@@ -13,6 +13,7 @@ import {
   deleteSelectedThreadEntries,
   buildSidebarProjectScopeItems,
   filterSidebarProjectScopeItems,
+  groupSidebarThreadsBySection,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
@@ -861,6 +862,20 @@ describe("filterSidebarProjectScopeItems", () => {
   it("returns matching projects in source order and supports no-match results", () => {
     expect(filter("WORK")).toEqual([items[1]]);
     expect(filter("missing")).toEqual([]);
+  });
+});
+
+describe("groupSidebarThreadsBySection", () => {
+  it("keeps unsectioned rows first and sections alphabetical, preserving row order", () => {
+    const sectionOf = (key: string) =>
+      ({ n1: "hwc", n2: "hwc", d1: "datax", p1: "personal" })[key] ?? null;
+    const grouped = groupSidebarThreadsBySection(["n1", "x1", "d1", "n2", "p1", "x2"], sectionOf);
+    expect(grouped.unsectioned).toEqual(["x1", "x2"]);
+    expect(grouped.sections).toEqual([
+      { name: "datax", threads: ["d1"] },
+      { name: "hwc", threads: ["n1", "n2"] },
+      { name: "personal", threads: ["p1"] },
+    ]);
   });
 });
 

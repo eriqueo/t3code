@@ -156,7 +156,11 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   buildSidebarProjectScopeItems,
+  groupSidebarThreadsBySection,
+  isSidebarProjectSectionMarker,
+  sidebarProjectSectionMarker,
   type SidebarProjectScopeItem,
+  type SidebarProjectSectionMarker,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
@@ -256,6 +260,8 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+// Project sections start expanded; this lists the ones the user folded.
+const COLLAPSED_PROJECT_SECTIONS_KEY = "t3code:sidebar:collapsed-project-sections";
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -662,7 +668,7 @@ function SidebarDragBoundary(props: {
 
 // Shelf headers stay visible and keep their measured height while dragging.
 function SidebarSectionHeader(props: {
-  marker: "snoozed-header" | "settled-header";
+  marker: "snoozed-header" | "settled-header" | SidebarProjectSectionMarker;
   label: string;
   className?: string;
   // While dragging, the settled header reads at full strength and takes the
@@ -725,7 +731,11 @@ function SidebarSectionHeader(props: {
               type="button"
               onClick={props.toggle.onToggle}
               aria-expanded={props.toggle.expanded}
-              data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
+              data-testid={
+                isSidebarProjectSectionMarker(props.marker)
+                  ? "sidebar-project-section-toggle"
+                  : `sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`
+              }
               className={cn(className, "cursor-pointer")}
             />
           }
@@ -2697,7 +2707,7 @@ export default function Sidebar() {
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
-    activeThreads,
+    activeThreads: partitionedActiveThreads,
     snoozedThreads,
     settledThreads,
     snoozeNow,
@@ -2799,6 +2809,95 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+
+  // Active rows group under user-named project sections, each a collapsible
+  // heading like the shelves. Unsectioned rows stay first with no heading.
+  // The compact rail keeps the flat list: it has no room for headings.
+  const sectionByProjectRefKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of projectGroups) {
+      const section = projectSections[group.projectKey];
+      if (section === undefined) continue;
+      for (const ref of group.memberProjectRefs) {
+        map.set(`${ref.environmentId}:${ref.projectId}`, section);
+      }
+    }
+    return map;
+  }, [projectGroups, projectSections]);
+  const [collapsedProjectSections, setCollapsedProjectSections] = useLocalStorage(
+    COLLAPSED_PROJECT_SECTIONS_KEY,
+    [],
+    Schema.Array(Schema.String),
+  );
+  const toggleProjectSection = useCallback(
+    (section: string) =>
+      setCollapsedProjectSections((current) =>
+        current.includes(section)
+          ? current.filter((name) => name !== section)
+          : [...current, section],
+      ),
+    [setCollapsedProjectSections],
+  );
+  const activeSectionGroups = useMemo(
+    () =>
+      compact || sectionByProjectRefKey.size === 0
+        ? null
+        : groupSidebarThreadsBySection(
+            partitionedActiveThreads,
+            (thread) =>
+              sectionByProjectRefKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
+          ),
+    [compact, partitionedActiveThreads, sectionByProjectRefKey],
+  );
+  const activeThreads = useMemo(
+    () =>
+      activeSectionGroups === null
+        ? partitionedActiveThreads
+        : [
+            ...activeSectionGroups.unsectioned,
+            ...activeSectionGroups.sections.flatMap((section) => section.threads),
+          ],
+    [activeSectionGroups, partitionedActiveThreads],
+  );
+  // Collapsed sections hide their rows, except the open thread, which never
+  // vanishes behind a heading (the shelves make the same exception).
+  const visibleActiveSections = useMemo(() => {
+    if (activeSectionGroups === null) return null;
+    const collapsed = new Set(collapsedProjectSections);
+    return activeSectionGroups.sections.map((section) => ({
+      name: section.name,
+      total: section.threads.length,
+      collapsed: collapsed.has(section.name),
+      threads: collapsed.has(section.name)
+        ? section.threads.filter(
+            (thread) =>
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+          )
+        : section.threads,
+    }));
+  }, [activeSectionGroups, collapsedProjectSections, routeThreadKey]);
+  const visibleActiveThreads = useMemo(
+    () =>
+      visibleActiveSections === null || activeSectionGroups === null
+        ? activeThreads
+        : [
+            ...activeSectionGroups.unsectioned,
+            ...visibleActiveSections.flatMap((section) => section.threads),
+          ],
+    [activeSectionGroups, activeThreads, visibleActiveSections],
+  );
+  const projectSectionByThreadKey = useMemo(() => {
+    const map = new Map<string, SidebarProjectSectionMarker>();
+    for (const section of visibleActiveSections ?? []) {
+      for (const thread of section.threads) {
+        map.set(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          sidebarProjectSectionMarker(section.name),
+        );
+      }
+    }
+    return map;
+  }, [visibleActiveSections]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2925,8 +3024,13 @@ export default function Sidebar() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...pinnedThreads,
+      ...visibleActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [pinnedThreads, visibleActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -3366,12 +3470,14 @@ export default function Sidebar() {
       ),
     [pinnedThreads],
   );
+  // The displayed active order: drops compare against it, so rows hidden in
+  // a collapsed section stay out (their keys are still reserved below).
   const activeKeys = useMemo(
     () =>
-      activeThreads.map((thread) =>
+      visibleActiveThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [activeThreads],
+    [visibleActiveThreads],
   );
   useEffect(() => {
     if (optimisticDrop === null) return;
@@ -3535,9 +3641,16 @@ export default function Sidebar() {
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
-    items.push(...activeRows);
+    if (visibleActiveSections === null || activeSectionGroups === null) {
+      items.push(...rowsOf(activeThreads, "active"));
+    } else {
+      items.push(...rowsOf(activeSectionGroups.unsectioned, "active"));
+      for (const section of visibleActiveSections) {
+        items.push({ kind: "marker", marker: sidebarProjectSectionMarker(section.name) });
+        items.push(...rowsOf(section.threads, "active"));
+      }
+    }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
       items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
@@ -3549,10 +3662,12 @@ export default function Sidebar() {
     }
     return items;
   }, [
+    activeSectionGroups,
     activeThreads,
     compact,
     pinnedThreads,
     renderedSettledThreads,
+    visibleActiveSections,
     settledThreads.length,
     snoozedThreads.length,
     visibleSnoozedThreads,
@@ -3627,10 +3742,12 @@ export default function Sidebar() {
         settledVisibleCount,
         routeThreadKey,
         snoozedThreadCount: snoozedThreads.length,
+        projectSectionByThreadKey,
       }),
     [
       compact,
       draggedSettledOrder,
+      projectSectionByThreadKey,
       routeThreadKey,
       settledShelfExpanded,
       settledVisibleCount,
@@ -5121,6 +5238,30 @@ export default function Sidebar() {
                               />,
                             );
                             break;
+                          default: {
+                            if (!isSidebarProjectSectionMarker(item.marker)) break;
+                            const section = visibleActiveSections?.find(
+                              (candidate) =>
+                                sidebarProjectSectionMarker(candidate.name) === item.marker,
+                            );
+                            if (!section) break;
+                            items.push(
+                              <SidebarSectionHeader
+                                key={item.marker}
+                                marker={item.marker}
+                                label={
+                                  section.collapsed
+                                    ? `${section.name} (${section.total})`
+                                    : section.name
+                                }
+                                dragging={from !== null}
+                                toggle={{
+                                  expanded: !section.collapsed,
+                                  onToggle: () => toggleProjectSection(section.name),
+                                }}
+                              />,
+                            );
+                          }
                         }
                       }
                       // Keep the shelf inside this drag context while anchoring
