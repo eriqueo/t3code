@@ -14,6 +14,8 @@ const baseState: ThreadActionMenuState = {
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
+  sectionNames: [],
+  currentSection: null,
 };
 
 function ids(state: ThreadActionMenuState): string[] {
@@ -33,7 +35,32 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "section",
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
+  });
+
+  it("offers existing sections, a new section, and removal only when assigned", () => {
+    const section = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).find((item) => item.id === "section");
+    expect(section(baseState)?.children?.map((child) => child.id)).toEqual(["section:new"]);
+    const assigned = section({
+      ...baseState,
+      sectionNames: ["datax", "hwc"],
+      currentSection: "hwc",
+    });
+    expect(assigned?.children?.map((child) => [child.id, child.disabled ?? false])).toEqual([
+      ["section:set:datax", false],
+      ["section:set:hwc", true],
+      ["section:new", false],
+      ["section:clear", false],
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {

@@ -1,6 +1,39 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+export type ThreadSectionMenuId =
+  | "section"
+  | `section:set:${string}`
+  | "section:new"
+  | "section:clear";
+
+function buildThreadSectionMenuItem(input: {
+  readonly sectionNames: readonly string[];
+  readonly currentSection: string | null;
+}): ContextMenuItem<ThreadSectionMenuId> {
+  return {
+    id: "section",
+    label: "Move to section",
+    icon: "folder",
+    children: [
+      ...input.sectionNames.map((name) => ({
+        id: `section:set:${name}` as const,
+        label: name === input.currentSection ? `${name} (current)` : name,
+        disabled: name === input.currentSection,
+      })),
+      {
+        id: "section:new" as const,
+        label: "New section…",
+        icon: "plus",
+        separatorBefore: input.sectionNames.length > 0,
+      },
+      ...(input.currentSection === null
+        ? []
+        : [{ id: "section:clear" as const, label: "Remove from section", icon: "x" }]),
+    ],
+  };
+}
+
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
  * `snooze:<presetId>` so the union stays closed while the preset list
@@ -24,7 +57,8 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | ThreadSectionMenuId;
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
@@ -42,6 +76,9 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** Existing sidebar section names, and the one this thread is in. */
+  readonly sectionNames: readonly string[];
+  readonly currentSection: string | null;
 }
 
 /**
@@ -95,6 +132,10 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    buildThreadSectionMenuItem({
+      sectionNames: state.sectionNames,
+      currentSection: state.currentSection,
+    }),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [

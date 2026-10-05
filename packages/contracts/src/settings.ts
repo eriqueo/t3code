@@ -445,9 +445,9 @@ export const ClientSettingsSchema = Schema.Struct({
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  // User-named sections ("work", "personal") keyed by logical project key.
-  // The sidebar project filter lists sections and can scope to a whole one.
-  sidebarProjectSections: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
+  // User-named sidebar sections ("work", "personal") keyed by scoped thread
+  // key. Active threads in a section group under its collapsible heading.
+  sidebarThreadSections: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
@@ -1503,7 +1503,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
   ),
-  sidebarProjectSections: Schema.optionalKey(
+  sidebarThreadSections: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),

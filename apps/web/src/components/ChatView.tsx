@@ -152,6 +152,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
+import { useThreadSectionPickerStore } from "../threadSections";
 import {
   latestWorkspaceMutationId,
   useWorkspaceMutationRefresh,
@@ -6692,6 +6693,14 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         composerRef.current?.toggleModelPicker();
+        return;
+      }
+
+      if (command === "thread.moveToSection") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isServerThread || !activeThreadRef) return;
+        useThreadSectionPickerStore.getState().open(activeThreadRef);
         return;
       }
 

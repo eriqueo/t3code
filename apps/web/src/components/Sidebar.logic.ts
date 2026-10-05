@@ -109,28 +109,28 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "snoozed-header"
   | "settled-header"
-  /** A user-named project section heading inside the active rows. Drop
-      resolution ignores it, so the rows around it stay one active section. */
-  | SidebarProjectSectionMarker;
+  /** A user-named section heading inside the active rows. Drop resolution
+      ignores it, so the rows around it stay one active section. */
+  | SidebarUserSectionMarker;
 
-export type SidebarProjectSectionMarker = `project-section:${string}`;
+export type SidebarUserSectionMarker = `user-section:${string}`;
 
-export function sidebarProjectSectionMarker(section: string): SidebarProjectSectionMarker {
-  return `project-section:${section}`;
+export function sidebarUserSectionMarker(section: string): SidebarUserSectionMarker {
+  return `user-section:${section}`;
 }
 
-export function isSidebarProjectSectionMarker(
+export function isSidebarUserSectionMarker(
   marker: SidebarListMarker,
-): marker is SidebarProjectSectionMarker {
-  return marker.startsWith("project-section:");
+): marker is SidebarUserSectionMarker {
+  return marker.startsWith("user-section:");
 }
 
-export function compareSidebarProjectSections(left: string, right: string): number {
+export function compareSidebarUserSections(left: string, right: string): number {
   return left.localeCompare(right, undefined, { sensitivity: "base" });
 }
 
 /**
- * Splits active rows by project section, keeping each group's incoming order.
+ * Splits active rows by their user section, keeping each group's incoming order.
  * Unsectioned rows come first with no heading; sections follow alphabetically.
  */
 export function groupSidebarThreadsBySection<T>(
@@ -155,7 +155,7 @@ export function groupSidebarThreadsBySection<T>(
   return {
     unsectioned,
     sections: [...bySection.keys()]
-      .toSorted(compareSidebarProjectSections)
+      .toSorted(compareSidebarUserSections)
       .map((name) => ({ name, threads: bySection.get(name)! })),
   };
 }
@@ -940,76 +940,6 @@ export function searchSidebarThreads<
       term.toLowerCase().includes(normalizedQuery),
     ),
   );
-}
-
-const SIDEBAR_SECTION_SCOPE_PREFIX = "section:";
-
-export type SidebarProjectScopeItem =
-  | { readonly kind: "all"; readonly value: "all"; readonly label: string }
-  | {
-      readonly kind: "section";
-      readonly value: string;
-      readonly label: string;
-      readonly projectKeys: readonly string[];
-    }
-  | {
-      readonly kind: "project";
-      readonly value: string;
-      readonly label: string;
-      readonly inSection: boolean;
-    };
-
-/**
- * Orders the project filter as: All projects, then each user-named section
- * (alphabetical) followed by its projects, then unsectioned projects. A section
- * row scopes to every project in it. Assignments to projects that no longer
- * exist are ignored, so empty sections never appear.
- */
-export function buildSidebarProjectScopeItems(input: {
-  readonly projects: ReadonlyArray<{ readonly projectKey: string; readonly displayName: string }>;
-  readonly sections: Readonly<Record<string, string>>;
-}): SidebarProjectScopeItem[] {
-  const projectsBySection = new Map<string, Array<(typeof input.projects)[number]>>();
-  const unsectioned: Array<(typeof input.projects)[number]> = [];
-  for (const project of input.projects) {
-    const section = input.sections[project.projectKey];
-    if (section === undefined) {
-      unsectioned.push(project);
-      continue;
-    }
-    const members = projectsBySection.get(section);
-    if (members) members.push(project);
-    else projectsBySection.set(section, [project]);
-  }
-
-  const items: SidebarProjectScopeItem[] = [{ kind: "all", value: "all", label: "All projects" }];
-  const sectionNames = [...projectsBySection.keys()].toSorted(compareSidebarProjectSections);
-  for (const section of sectionNames) {
-    const members = projectsBySection.get(section)!;
-    items.push({
-      kind: "section",
-      value: `${SIDEBAR_SECTION_SCOPE_PREFIX}${section}`,
-      label: section,
-      projectKeys: members.map((project) => project.projectKey),
-    });
-    for (const project of members) {
-      items.push({
-        kind: "project",
-        value: project.projectKey,
-        label: project.displayName,
-        inSection: true,
-      });
-    }
-  }
-  for (const project of unsectioned) {
-    items.push({
-      kind: "project",
-      value: project.projectKey,
-      label: project.displayName,
-      inSection: false,
-    });
-  }
-  return items;
 }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {

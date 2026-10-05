@@ -14,7 +14,6 @@ import { Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
@@ -177,27 +176,6 @@ function ProjectDetail({
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
-  const projectSections = useClientSettings((s) => s.sidebarProjectSections);
-  const updateClientSettings = useUpdateClientSettings();
-  const projectSection = projectSections[group.projectKey] ?? "";
-  const sectionNames = useMemo(
-    () =>
-      [...new Set(Object.values(projectSections))].toSorted((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" }),
-      ),
-    [projectSections],
-  );
-  const setProjectSection = useCallback(
-    (value: string) => {
-      const section = value.trim();
-      if (section === projectSection) return;
-      const next = { ...projectSections };
-      if (section.length === 0) delete next[group.projectKey];
-      else next[group.projectKey] = section;
-      updateClientSettings({ sidebarProjectSections: next });
-    },
-    [group.projectKey, projectSection, projectSections, updateClientSettings],
-  );
 
   const faviconPath = representative.faviconPath ?? null;
   const projectIcon = representative.projectIcon ?? null;
@@ -451,37 +429,6 @@ function ProjectDetail({
                   if (event.key === "Enter") event.currentTarget.blur();
                 }}
               />
-            }
-          />
-          <SettingsRow
-            title="Section"
-            description="Groups this project with others in the sidebar project filter, where the section can be selected as a whole."
-            resetAction={
-              projectSection ? (
-                <SettingResetButton label="section" onClick={() => setProjectSection("")} />
-              ) : null
-            }
-            control={
-              <>
-                <Input
-                  key={`${group.projectKey}:${projectSection}`}
-                  size="sm"
-                  className="w-full sm:w-64"
-                  aria-label="Project section"
-                  placeholder="None"
-                  list="project-section-names"
-                  defaultValue={projectSection}
-                  onBlur={(event) => setProjectSection(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                />
-                <datalist id="project-section-names">
-                  {sectionNames.map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-                </datalist>
-              </>
             }
           />
           <SettingsRow

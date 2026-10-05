@@ -11,7 +11,6 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
-  buildSidebarProjectScopeItems,
   filterSidebarProjectScopeItems,
   groupSidebarThreadsBySection,
   getSidebarThreadIdsToPrewarm,
@@ -876,40 +875,6 @@ describe("groupSidebarThreadsBySection", () => {
       { name: "hwc", threads: ["n1", "n2"] },
       { name: "personal", threads: ["p1"] },
     ]);
-  });
-});
-
-describe("buildSidebarProjectScopeItems", () => {
-  const projects = [
-    { projectKey: "nixos", displayName: "nixos-hwc" },
-    { projectKey: "blog", displayName: "blog" },
-    { projectKey: "datax", displayName: "datax" },
-    { projectKey: "crm", displayName: "hwc-crm" },
-  ];
-
-  it("lists sections alphabetically with their projects, then unsectioned projects", () => {
-    const items = buildSidebarProjectScopeItems({
-      projects,
-      sections: { nixos: "hwc", crm: "hwc", datax: "DataX", gone: "personal" },
-    });
-    expect(items.map((item) => [item.kind, item.value])).toEqual([
-      ["all", "all"],
-      ["section", "section:DataX"],
-      ["project", "datax"],
-      ["section", "section:hwc"],
-      ["project", "nixos"],
-      ["project", "crm"],
-      ["project", "blog"],
-    ]);
-    expect(items.find((item) => item.value === "section:hwc")).toMatchObject({
-      projectKeys: ["nixos", "crm"],
-    });
-    expect(items.find((item) => item.value === "blog")).toMatchObject({ inSection: false });
-  });
-
-  it("keeps the flat project list when no sections are assigned", () => {
-    const items = buildSidebarProjectScopeItems({ projects, sections: {} });
-    expect(items.map((item) => item.value)).toEqual(["all", "nixos", "blog", "datax", "crm"]);
   });
 });
 

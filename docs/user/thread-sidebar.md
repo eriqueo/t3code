@@ -107,13 +107,13 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
-## Group projects into sections
+## Group threads into sections
 
-On web and desktop, set a project's **Section** in its project settings, such as
-`work` or `personal`. Active threads from that project then appear under a
-collapsible section heading in the sidebar, below threads from unsectioned
-projects. The project filter also lists each section, so you can show only the
-threads in one section. Clear the field to remove the project from its section.
+On web and desktop, right-click a thread and choose **Move to section** to put it
+in a section such as `work` or `personal`, or press `Mod+Shift+E` for the open
+thread. Active threads in a section appear under its collapsible heading, below
+threads without a section. Choose **Remove from section** to take a thread out.
+Section assignments are saved on this device.
 
 ## Find and reference work
 

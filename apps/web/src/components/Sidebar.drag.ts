@@ -1,13 +1,13 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
-  isSidebarProjectSectionMarker,
+  isSidebarUserSectionMarker,
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
   type SidebarListItem,
   type SidebarListMarker,
-  type SidebarProjectSectionMarker,
+  type SidebarUserSectionMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
 
@@ -109,8 +109,8 @@ export function createSidebarSortingStrategy(input: {
   /** Space each pinned boundary opens for its label while dragging. The
    * markers stay zero height at rest, so nothing is reserved until pickup. */
   boundaryLabelHeight?: number;
-  /** The project section heading each visible active row sits under. */
-  projectSectionByThreadKey?: ReadonlyMap<string, SidebarProjectSectionMarker>;
+  /** The user section heading each visible active row sits under. */
+  userSectionByThreadKey?: ReadonlyMap<string, SidebarUserSectionMarker>;
 }): SortingStrategy {
   const { items } = input;
   const indices = new Map(items.map((item, index) => [sidebarListItemId(item), index]));
@@ -191,15 +191,15 @@ export function createSidebarSortingStrategy(input: {
     // Section headings sit before the first row of their section. The lifted
     // row never opens a heading: it previews where it lands, not where it lives.
     const sectionMarkers = items.flatMap((item) =>
-      item.kind === "marker" && isSidebarProjectSectionMarker(item.marker) ? [item.marker] : [],
+      item.kind === "marker" && isSidebarUserSectionMarker(item.marker) ? [item.marker] : [],
     );
     if (sectionMarkers.length > 0) {
       const activeRows = projected.splice(projected.length - groups.active.length);
-      const emitted = new Set<SidebarProjectSectionMarker>();
+      const emitted = new Set<SidebarUserSectionMarker>();
       for (const row of activeRows) {
         const rowSection =
           row.kind === "thread" && row.key !== active.key
-            ? input.projectSectionByThreadKey?.get(row.key)
+            ? input.userSectionByThreadKey?.get(row.key)
             : undefined;
         if (rowSection !== undefined && !emitted.has(rowSection)) {
           marker(rowSection);

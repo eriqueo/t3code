@@ -10,7 +10,7 @@ import {
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
-  sidebarProjectSectionMarker,
+  sidebarUserSectionMarker,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -605,7 +605,7 @@ describe("sidebar drag projection", () => {
   });
 
   it("keeps project section headings in place while a row leaves the active section", () => {
-    const hwc = sidebarProjectSectionMarker("hwc");
+    const hwc = sidebarUserSectionMarker("hwc");
     const items = [
       pinnedHeader,
       divider,
@@ -621,7 +621,7 @@ describe("sidebar drag projection", () => {
         items,
         settledOrder: [],
         settledExpanded: false,
-        projectSectionByThreadKey: new Map([
+        userSectionByThreadKey: new Map([
           ["h1", hwc],
           ["h2", hwc],
         ]),
