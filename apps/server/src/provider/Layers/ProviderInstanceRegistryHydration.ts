@@ -52,7 +52,9 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ServerConfig } from "../../config.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
+import { makeCodexReviewDriver } from "../Drivers/CodexReviewDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceRegistryMutator.ts";
 import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
@@ -157,6 +159,7 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const config = yield* ServerConfig;
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -168,6 +171,7 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
+      ...(config.reviewLaunch ? { reviewDriver: makeCodexReviewDriver(config.reviewLaunch) } : {}),
     });
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));

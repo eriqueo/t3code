@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import type { CodexReviewLaunchConfig } from "./provider/Layers/codexReviewPolicy.ts";
 
 export const DEFAULT_PORT = 3773;
 
@@ -86,6 +87,7 @@ export class ServerConfig extends Context.Service<
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
+    readonly reviewLaunch?: CodexReviewLaunchConfig | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;

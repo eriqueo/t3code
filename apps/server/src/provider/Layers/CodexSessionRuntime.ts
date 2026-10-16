@@ -41,10 +41,17 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
+  CODEX_REVIEW_MODEL,
+  ReviewRequirements,
+  reviewEffectiveConfigSchema,
+  reviewThreadReceiptSchema,
+} from "./codexReviewPolicy.ts";
+import {
   buildCodexDeveloperInstructions,
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeReviewRequirements = Schema.decodeUnknownEffect(ReviewRequirements);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -171,6 +178,8 @@ export interface CodexSessionRuntimeOptions {
   readonly threadId: ThreadId;
   /** Internal Review policy; not inferred from the requested development mode. */
   readonly readOnly?: boolean;
+  readonly reviewPolicy?: { readonly homePath: string; readonly cwd: string };
+  readonly launchCwd?: string;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -555,6 +564,7 @@ function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly readOnly?: boolean;
+  readonly controlledReview?: boolean;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
@@ -564,6 +574,9 @@ function buildThreadStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
+    ...(input.controlledReview
+      ? { runtimeWorkspaceRoots: [input.cwd], selectedCapabilityRoots: [], dynamicTools: [] }
+      : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -619,6 +632,7 @@ export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly readOnly?: boolean;
+  readonly reviewCwd?: string;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
@@ -666,6 +680,12 @@ export function buildTurnStartParams(input: {
     ...(input.effort ? { effort: input.effort } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
+    Effect.map((params) => ({
+      ...params,
+      ...(input.reviewCwd
+        ? { cwd: input.reviewCwd, runtimeWorkspaceRoots: [input.reviewCwd] }
+        : {}),
+    })),
     Effect.mapError((cause) =>
       CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
         "decode-request-payload",
@@ -714,10 +734,11 @@ const decodeCodexThreadResumeMetadata = Schema.decodeUnknownEffect(CodexThreadRe
 interface CodexThreadOpenClient {
   readonly raw: {
     readonly request: (
-      method: "thread/resume",
-      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
-        readonly excludeTurns?: boolean;
-      },
+      method: "thread/resume" | "thread/start",
+      payload: (
+        | CodexRpc.ClientRequestParamsByMethod["thread/resume"]
+        | CodexRpc.ClientRequestParamsByMethod["thread/start"]
+      ) & { readonly excludeTurns?: boolean },
     ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
   };
   readonly request: (
@@ -734,6 +755,7 @@ export const openCodexThread = (input: {
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
   readonly readOnly?: boolean;
+  readonly controlledReview?: boolean;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
@@ -751,11 +773,37 @@ export const openCodexThread = (input: {
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     ...(input.readOnly ? { readOnly: true } : {}),
+    ...(input.controlledReview ? { controlledReview: true } : {}),
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
 
   if (resumeThreadId === undefined) {
+    if (input.controlledReview) {
+      return input.client.raw.request("thread/start", startParams).pipe(
+        Effect.flatMap((response) =>
+          Schema.decodeUnknownEffect(reviewThreadReceiptSchema(input.cwd))(response).pipe(
+            Effect.mapError(() =>
+              CodexErrors.CodexAppServerRequestError.invalidParams(
+                "The native Review thread did not retain its isolation policy.",
+                undefined,
+                { method: "thread/start", operation: "handle-request" },
+              ),
+            ),
+            Effect.andThen(decodeCodexThreadResumeMetadata(response)),
+          ),
+        ),
+        Effect.mapError((error) =>
+          Schema.isSchemaError(error)
+            ? CodexErrors.CodexAppServerRequestError.invalidPayload(
+                "thread/start",
+                "decode-payload",
+                error,
+              )
+            : error,
+        ),
+      );
+    }
     return input.client.request("thread/start", startParams);
   }
 
@@ -1322,6 +1370,24 @@ export const makeCodexSessionRuntime = (
         { method: "thread/resume", operation: "handle-request" },
       );
     }
+    if (
+      (options.providerInstanceId === REVIEW_PROVIDER_INSTANCE_ID && !options.reviewPolicy) ||
+      (options.reviewPolicy &&
+        (!readOnly ||
+          options.cwd !== options.reviewPolicy.cwd ||
+          options.homePath !== options.reviewPolicy.homePath ||
+          options.model !== CODEX_REVIEW_MODEL ||
+          options.environment === undefined ||
+          Boolean(options.launchArgs?.trim()) ||
+          (options.appServerArgs?.length ?? 0) > 0 ||
+          (options.mcpCapabilities?.size ?? 0) > 0))
+    ) {
+      return yield* CodexErrors.CodexAppServerRequestError.invalidParams(
+        "Review requires its controlled launch policy.",
+        undefined,
+        { method: "initialize", operation: "handle-request" },
+      );
+    }
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
@@ -1354,7 +1420,7 @@ export const makeCodexSessionRuntime = (
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          cwd: options.cwd,
+          cwd: options.launchCwd ?? options.cwd,
           env,
           extendEnv,
           forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
@@ -2393,10 +2459,50 @@ export const makeCodexSessionRuntime = (
       Effect.forkIn(runtimeScope),
     );
 
+    const verifyReviewConfiguration = Effect.fn("CodexSessionRuntime.verifyReviewConfiguration")(
+      function* () {
+        if (!options.reviewPolicy) return;
+        const requirements = yield* client.raw.request("configRequirements/read", undefined);
+        yield* decodeReviewRequirements(requirements).pipe(
+          Effect.mapError(() =>
+            CodexErrors.CodexAppServerRequestError.invalidParams(
+              "Review cannot use managed requirements.",
+              undefined,
+              { method: "configRequirements/read", operation: "handle-request" },
+            ),
+          ),
+        );
+        const config = yield* client.raw.request("config/read", {
+          cwd: options.reviewPolicy.cwd,
+          includeLayers: true,
+        });
+        yield* Schema.decodeUnknownEffect(
+          reviewEffectiveConfigSchema(options.reviewPolicy.homePath),
+        )(config).pipe(
+          Effect.mapError(() =>
+            CodexErrors.CodexAppServerRequestError.invalidParams(
+              "Review configuration does not match its isolation policy.",
+              undefined,
+              { method: "config/read", operation: "handle-request" },
+            ),
+          ),
+        );
+      },
+      Effect.timeout("10 seconds"),
+      Effect.mapError(() =>
+        CodexErrors.CodexAppServerRequestError.invalidParams(
+          "Review configuration could not be verified.",
+          undefined,
+          { method: "config/read", operation: "handle-request" },
+        ),
+      ),
+    );
+
     const start = Effect.fn("CodexSessionRuntime.start")(function* () {
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
+      yield* verifyReviewConfiguration();
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 
@@ -2405,6 +2511,7 @@ export const makeCodexSessionRuntime = (
         threadId: options.threadId,
         runtimeMode: options.runtimeMode,
         ...(readOnly ? { readOnly: true } : {}),
+        ...(options.reviewPolicy ? { controlledReview: true } : {}),
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
@@ -2465,6 +2572,18 @@ export const makeCodexSessionRuntime = (
       }),
       sendTurn: (input) =>
         Effect.gen(function* () {
+          if (
+            options.reviewPolicy &&
+            input.model !== undefined &&
+            input.model !== CODEX_REVIEW_MODEL
+          ) {
+            return yield* CodexErrors.CodexAppServerRequestError.invalidParams(
+              "Review cannot switch models.",
+              undefined,
+              { method: "turn/start", operation: "handle-request" },
+            );
+          }
+          yield* verifyReviewConfiguration();
           const providerThreadId = yield* readProviderThreadId;
           if (hasConfiguredMcpServer(options.appServerArgs)) {
             yield* client.request("config/mcpServer/reload", undefined).pipe(
@@ -2482,6 +2601,7 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(readOnly ? { readOnly: true } : {}),
+            ...(options.reviewPolicy ? { reviewCwd: options.reviewPolicy.cwd } : {}),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

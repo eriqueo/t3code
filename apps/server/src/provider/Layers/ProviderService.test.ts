@@ -450,7 +450,9 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive({ issueMcpCredential: input.issueMcpCredential }).pipe(
+      makeProviderServiceLive(
+        input.issueMcpCredential ? { issueMcpCredential: input.issueMcpCredential } : {},
+      ).pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),

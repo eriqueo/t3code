@@ -19,11 +19,13 @@ import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
+import { CodexReviewLaunchConfig } from "../provider/Layers/codexReviewPolicy.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
+const encodeReviewLaunch = Schema.encodeSync(Schema.fromJsonString(CodexReviewLaunchConfig));
 
 const makeDesktopBootstrap = (
   overrides: Partial<DesktopBackendBootstrapValue> = {},
@@ -40,6 +42,67 @@ const makeDesktopBootstrap = (
 });
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
+  for (const policy of ["absent", "valid", "malformed", "mutable-native"] as const) {
+    it.effect(`resolves startup-owned Review policy: ${policy}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-config-" });
+        const launch = {
+          nativeDirectory: "/nix/store/00000000000000000000000000000000-review-native",
+          pythonPath: "/nix/store/11111111111111111111111111111111-python/bin/python3",
+          mountPath: "/run/current-system/sw/bin/mount",
+          unsharePath: "/run/current-system/sw/bin/unshare",
+          authSource: "/home/fixture/.codex/auth.json",
+          path: "/nix/store/22222222222222222222222222222222-tools/bin",
+        };
+        const encoded = encodeReviewLaunch(launch);
+        const supplied =
+          policy === "malformed"
+            ? "{"
+            : policy === "mutable-native"
+              ? encoded.replace(launch.nativeDirectory, "/tmp/replaceable-native")
+              : encoded;
+        const result = yield* resolveServerConfig(
+          {
+            mode: Option.some("web"),
+            port: Option.some(3773),
+            host: Option.some("127.0.0.1"),
+            baseDir: Option.some(path.join(directory, "state")),
+            cwd: Option.some(path.join(directory, "project")),
+            devUrl: Option.none(),
+            noBrowser: Option.some(true),
+            bootstrapFd: Option.none(),
+            autoBootstrapProjectFromCwd: Option.some(false),
+            logWebSocketEvents: Option.some(false),
+            tailscaleServeEnabled: Option.some(false),
+            tailscaleServePort: Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnv({
+              env: policy === "absent" ? {} : { T3CODE_REVIEW_LAUNCH: supplied },
+            }),
+          ),
+          Effect.provide(NetService.layer),
+          Effect.result,
+        );
+        if (policy === "malformed" || policy === "mutable-native") {
+          assert.equal(result._tag, "Failure");
+          assert.isFalse(yield* fs.exists(path.join(directory, "state")));
+          assert.isFalse(yield* fs.exists(path.join(directory, "project")));
+        } else {
+          assert.equal(result._tag, "Success");
+          if (result._tag === "Success") {
+            expect(result.success.reviewLaunch).toEqual(policy === "valid" ? launch : undefined);
+          }
+        }
+      }),
+    );
+  }
+
   const defaultObservabilityConfig = {
     traceMinLevel: "Info",
     traceTimingEnabled: true,

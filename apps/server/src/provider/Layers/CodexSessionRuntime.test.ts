@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -17,6 +21,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
+import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
@@ -26,6 +31,7 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   makeCodexSessionRuntime,
+  type CodexSessionRuntimeOptions,
   openCodexThread,
   readCodexThread,
   rollbackCodexThread,
@@ -56,11 +62,306 @@ for (const policy of ["reserved-id", "explicit-read-only"] as const) {
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(spawnCount, 0);
     }).pipe(
-      Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
     );
   });
 }
+
+// This stdlib-only peer records real JSON-line requests. It cannot run a model,
+// tools or native Codex; every response comes from the disposable fixture file.
+const reviewPolicyPeer = `#!${process.execPath}
+import fs from "node:fs";
+import readline from "node:readline";
+const fixturePath = process.env.REVIEW_FIXTURE;
+readline.createInterface({ input: process.stdin }).on("line", line => {
+  const request = JSON.parse(line);
+  fs.appendFileSync(fixturePath + ".requests", JSON.stringify(request) + "\\n");
+  if (request.id === undefined) return;
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  const result = fixture.responses[request.method];
+  process.stdout.write(JSON.stringify(result === undefined
+    ? { id: request.id, error: { code: -32601, message: "Unscripted request" } }
+    : { id: request.id, result }) + "\\n");
+});
+`;
+
+const makeReviewPolicyFixture = Effect.gen(function* () {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-review-policy-"));
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+  );
+  const cwd = NodePath.join(directory, "neutral");
+  const homePath = NodePath.join(directory, "home");
+  NodeFS.mkdirSync(cwd);
+  NodeFS.mkdirSync(homePath);
+  const peerPath = NodePath.join(directory, "peer.mjs");
+  NodeFS.writeFileSync(peerPath, reviewPolicyPeer, { mode: 0o700 });
+  const fixturePath = NodePath.join(directory, "fixture.json");
+  const responses = {
+    initialize: {
+      userAgent: "sanitized-review-peer/0.163.0",
+      codexHome: homePath,
+      platformFamily: "unix",
+      platformOs: "linux",
+    },
+    "configRequirements/read": { requirements: null } as { requirements: unknown },
+    "config/read": {
+      config: {
+        approval_policy: "never",
+        sandbox_mode: "read-only",
+        web_search: "disabled",
+        cli_auth_credentials_store: "file",
+        allow_login_shell: false,
+        model_provider: "openai",
+        default_permissions: null,
+        permissions: null,
+        profile: null,
+        profiles: {},
+        mcp_servers: {},
+        agents: { enabled: false },
+        apps: { _default: { enabled: false } },
+        features: {
+          apps: false,
+          multi_agent: false,
+          multi_agent_v2: false,
+          plugins: false,
+          remote_plugin: false,
+          hooks: false,
+          browser_use: false,
+          browser_use_external: false,
+          browser_use_full_cdp_access: false,
+          computer_use: false,
+          in_app_browser: false,
+          in_app_local_automation: false,
+          in_app_chat: false,
+          code_mode: false,
+          code_mode_host: true,
+          image_generation: false,
+          skill_mcp_dependency_install: false,
+          skill_search: false,
+        },
+      },
+      layers: [
+        { name: { type: "system", file: "/etc/codex/config.toml" }, disabledReason: null },
+        { name: { type: "user", file: `${homePath}/config.toml` }, disabledReason: null },
+        { name: { type: "sessionFlags" }, disabledReason: null },
+      ],
+    },
+    "thread/start": {
+      ...structuredClone(wireFixture.responses.threadStart),
+      cwd,
+      model: "gpt-6.1-sol",
+      approvalPolicy: "never",
+      approvalsReviewer: "user",
+      sandbox: { type: "readOnly", networkAccess: false },
+      activePermissionProfile: null,
+      runtimeWorkspaceRoots: [cwd],
+      instructionSources: [] as string[],
+      thread: {
+        ...structuredClone(wireFixture.responses.threadStart.thread),
+        cwd,
+        cliVersion: "0.163.0",
+        environments: [{ environmentId: "local", cwd, runtimeWorkspaceRoots: [cwd] }],
+      },
+    },
+    "turn/start": structuredClone(wireFixture.responses.turnStart),
+  };
+  const save = () => NodeFS.writeFileSync(fixturePath, JSON.stringify({ responses }));
+  const requests = () =>
+    NodeFS.readFileSync(`${fixturePath}.requests`, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method: string; params?: Record<string, unknown> });
+  save();
+  const runtime = yield* makeCodexSessionRuntime({
+    threadId: ThreadId.make("controlled-review-wire"),
+    providerInstanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+    binaryPath: peerPath,
+    runtimeMode: "full-access",
+    cwd,
+    homePath,
+    reviewPolicy: { cwd, homePath },
+    model: "gpt-6.1-sol",
+    environment: { REVIEW_FIXTURE: fixturePath },
+    launchCwd: directory,
+  });
+  return { runtime, responses, save, requests, cwd };
+});
+
+describe("Safe Review controlled runtime policy", () => {
+  for (const [name, change] of [
+    ["missing trusted policy", { reviewPolicy: undefined }],
+    ["different cwd", { cwd: "/tmp/development" }],
+    ["different home", { homePath: "/tmp/development-home" }],
+    ["different model", { model: "gpt-6-astra" }],
+    ["ambient environment", { environment: undefined }],
+    ["caller launch overrides", { launchArgs: "--config sandbox_mode=workspace-write" }],
+    ["caller app-server overrides", { appServerArgs: ["--config", "features.apps=true"] }],
+    ["MCP capability", { mcpCapabilities: new Set(["browser"]) }],
+    [
+      "policy on an ordinary writable instance",
+      { providerInstanceId: ProviderInstanceId.make("codex") },
+    ],
+  ] as const) {
+    it.effect(`rejects ${name} before spawn`, () => {
+      let spawns = 0;
+      const spawner = ChildProcessSpawner.make(() => {
+        spawns += 1;
+        return Effect.die("Invalid Review policy reached process spawn");
+      });
+      return Effect.gen(function* () {
+        const unsafeOptions = {
+          threadId: ThreadId.make("invalid-review-policy"),
+          runtimeMode: "full-access",
+          providerInstanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+          binaryPath: "/unused-review-peer",
+          cwd: "/tmp/review-neutral",
+          homePath: "/tmp/review-home",
+          model: "gpt-6.1-sol",
+          environment: {},
+          reviewPolicy: { cwd: "/tmp/review-neutral", homePath: "/tmp/review-home" },
+          ...change,
+        };
+        // Deliberately include malformed optional fields to test edge refusal.
+        const error = yield* makeCodexSessionRuntime(
+          unsafeOptions as CodexSessionRuntimeOptions,
+        ).pipe(Effect.flip);
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        NodeAssert.equal(error.method, "initialize");
+        NodeAssert.equal(spawns, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+      );
+    });
+  }
+
+  for (const invalid of ["managed requirements", "enabled feature", "wrong user layer"] as const) {
+    it.effect(`rejects ${invalid} after initialize and before thread/start`, () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeReviewPolicyFixture;
+        if (invalid === "managed requirements")
+          fixture.responses["configRequirements/read"].requirements = {};
+        if (invalid === "enabled feature")
+          fixture.responses["config/read"].config.features.apps = true;
+        if (invalid === "wrong user layer")
+          fixture.responses["config/read"].layers[1]!.name.file = "/tmp/development/config.toml";
+        fixture.save();
+        const error = yield* fixture.runtime.start().pipe(Effect.flip);
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        const methods = fixture.requests().map((request) => request.method);
+        NodeAssert.deepEqual(methods.slice(0, 3), [
+          "initialize",
+          "initialized",
+          "configRequirements/read",
+        ]);
+        NodeAssert.ok(!methods.includes("thread/start"));
+        NodeAssert.ok(!methods.includes("turn/start"));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  it.effect("accepts matching native receipts and rechecks before each turn", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeReviewPolicyFixture;
+      const session = yield* fixture.runtime.start();
+      NodeAssert.equal(session.status, "ready");
+      NodeAssert.equal(session.cwd, fixture.cwd);
+      for (const input of ["first disposable turn", "second disposable turn"]) {
+        yield* fixture.runtime.sendTurn({ input });
+      }
+      const requests = fixture.requests();
+      NodeAssert.deepEqual(
+        requests.map((request) => request.method),
+        [
+          "initialize",
+          "initialized",
+          "configRequirements/read",
+          "config/read",
+          "thread/start",
+          "configRequirements/read",
+          "config/read",
+          "turn/start",
+          "configRequirements/read",
+          "config/read",
+          "turn/start",
+        ],
+      );
+      for (const request of requests.filter((request) =>
+        ["thread/start", "turn/start"].includes(request.method),
+      )) {
+        NodeAssert.equal(request.params?.cwd, fixture.cwd);
+        NodeAssert.equal(request.params?.approvalPolicy, "never");
+        NodeAssert.deepEqual(request.params?.runtimeWorkspaceRoots, [fixture.cwd]);
+      }
+      NodeAssert.equal(requests[4]?.params?.sandbox, "read-only");
+      NodeAssert.deepEqual(requests[4]?.params?.selectedCapabilityRoots, []);
+      NodeAssert.deepEqual(requests[4]?.params?.dynamicTools, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("blocks configuration drift before a later native turn", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeReviewPolicyFixture;
+      yield* fixture.runtime.start();
+      yield* fixture.runtime.sendTurn({ input: "permitted fixture turn" });
+      fixture.responses["config/read"].config.features.apps = true;
+      fixture.save();
+      const error = yield* fixture.runtime
+        .sendTurn({ input: "must not reach native turn" })
+        .pipe(Effect.flip);
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(
+        fixture.requests().filter((request) => request.method === "turn/start").length,
+        1,
+      );
+      NodeAssert.deepEqual(
+        fixture
+          .requests()
+          .slice(-2)
+          .map((request) => request.method),
+        ["configRequirements/read", "config/read"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a model override before any additional native RPC", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeReviewPolicyFixture;
+      yield* fixture.runtime.start();
+      const before = fixture.requests();
+      const error = yield* fixture.runtime
+        .sendTurn({ input: "blocked override", model: "gpt-6-astra" })
+        .pipe(Effect.flip);
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.method, "turn/start");
+      NodeAssert.deepEqual(fixture.requests(), before);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a native thread that loaded development instructions", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeReviewPolicyFixture;
+      fixture.responses["thread/start"].instructionSources = ["/tmp/development/AGENTS.md"];
+      fixture.save();
+      const error = yield* fixture.runtime.start().pipe(Effect.flip);
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.method, "thread/start");
+      NodeAssert.equal(fixture.requests().at(-1)?.method, "thread/start");
+      NodeAssert.notEqual((yield* fixture.runtime.getSession).status, "ready");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe("Codex thread history", () => {
   for (const numTurns of [1, 2, 3, 5]) {
@@ -1075,9 +1376,12 @@ describe("openCodexThread", () => {
       const client = {
         raw: {
           request: (
-            method: "thread/resume",
-            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+            method: "thread/resume" | "thread/start",
+            payload:
+              | CodexRpc.ClientRequestParamsByMethod["thread/resume"]
+              | CodexRpc.ClientRequestParamsByMethod["thread/start"],
           ) => {
+            NodeAssert.equal(method, "thread/resume");
             calls.push({ method, payload });
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({

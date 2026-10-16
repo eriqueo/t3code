@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { CodexReviewLaunchConfig } from "../provider/Layers/codexReviewPolicy.ts";
 
 const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -76,6 +77,10 @@ const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  reviewLaunch: Config.schema(
+    Schema.fromJsonString(CodexReviewLaunchConfig),
+    "T3CODE_REVIEW_LAUNCH",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.logLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
@@ -380,6 +385,7 @@ export const resolveServerConfig = (
       desktopTelemetryFd,
       desktopTelemetryControlFd,
       resourceMonitorPath,
+      reviewLaunch: env.reviewLaunch,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,
