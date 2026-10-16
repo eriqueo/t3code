@@ -2,9 +2,14 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 
 import {
+  AVAILABLE_REVIEW_CAPABILITY,
   type DeviceServiceState,
   AuthAccessTokenType,
   AuthStandardClientScopes,
@@ -36,6 +41,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   REVIEW_PROVIDER_INSTANCE_ID,
+  UNAVAILABLE_REVIEW_CAPABILITY,
   type ProviderInstallState,
   ProviderSetupError,
   ResolvedKeybindingRule,
@@ -90,6 +96,15 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const REVIEW_NEGOTIATION_LAUNCH: NonNullable<ServerConfig.ServerConfig["Service"]["reviewLaunch"]> =
+  {
+    nativeDirectory: "/nix/store/review-negotiation-test-only",
+    pythonPath: "/not-executed/python",
+    mountPath: "/not-executed/mount",
+    unsharePath: "/not-executed/unshare",
+    authSource: "/not-read/auth.json",
+    path: "/not-executed/bin",
+  };
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout: "",
@@ -2203,17 +2218,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("requires authentication for Review capability negotiation", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      const getInstance = vi.fn(() => Effect.die("Unauthenticated negotiation must not probe"));
+      yield* buildAppUnderTest({
+        config: { reviewLaunch: REVIEW_NEGOTIATION_LAUNCH },
+        layers: { providerInstanceRegistry: { getInstance } },
+      });
       const response = yield* fetchEffect(
         yield* getHttpServerUrl("/api/orchestration/review-capability"),
       );
       assert.equal(response.status, 401);
+      assert.equal(getInstance.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("requires orchestration read scope for Review capability negotiation", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      const getInstance = vi.fn(() => Effect.die("Unauthorized negotiation must not probe"));
+      yield* buildAppUnderTest({
+        config: { reviewLaunch: REVIEW_NEGOTIATION_LAUNCH },
+        layers: { providerInstanceRegistry: { getInstance } },
+      });
       const { response: exchangeResponse, body } = yield* exchangeAccessToken(
         defaultDesktopBootstrapToken,
         { scope: "access:write" },
@@ -2227,6 +2251,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 403);
       const failure = yield* responseJsonEffect<{ readonly requiredScope: string }>(response);
       assert.equal(failure.requiredScope, "orchestration:read");
+      assert.equal(getInstance.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2275,6 +2300,145 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(startSession.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const scenario of [
+    {
+      label: "trusted enabled Codex instance",
+      launch: true,
+      platform: "linux",
+      arch: "x64",
+      instance: "ready",
+      available: true,
+      lookups: 1,
+    },
+    {
+      label: "missing startup launch policy",
+      launch: false,
+      platform: "linux",
+      arch: "x64",
+      instance: "ready",
+      available: false,
+      lookups: 0,
+    },
+    {
+      label: "missing registry instance",
+      launch: true,
+      platform: "linux",
+      arch: "x64",
+      instance: "missing",
+      available: false,
+      lookups: 1,
+    },
+    {
+      label: "disabled registry instance",
+      launch: true,
+      platform: "linux",
+      arch: "x64",
+      instance: "disabled",
+      available: false,
+      lookups: 1,
+    },
+    {
+      label: "wrong registry driver",
+      launch: true,
+      platform: "linux",
+      arch: "x64",
+      instance: "wrong-driver",
+      available: false,
+      lookups: 1,
+    },
+    {
+      label: "unsupported operating system",
+      launch: true,
+      platform: "darwin",
+      arch: "x64",
+      instance: "ready",
+      available: false,
+      lookups: 0,
+    },
+    {
+      label: "unsupported architecture",
+      launch: true,
+      platform: "linux",
+      arch: "arm64",
+      instance: "ready",
+      available: false,
+      lookups: 0,
+    },
+  ] as const) {
+    it.effect(`negotiates Review capability with ${scenario.label} without launching`, () =>
+      Effect.gen(function* () {
+        const instance: ProviderInstance = {
+          instanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+          driverKind: ProviderDriverKind.make(
+            scenario.instance === "wrong-driver" ? "claudeAgent" : "codex",
+          ),
+          continuationIdentity: {
+            driverKind: ProviderDriverKind.make("codex"),
+            continuationKey: "review-negotiation-test-only",
+          },
+          displayName: "Review",
+          enabled: scenario.instance !== "disabled",
+          get snapshot(): ProviderInstance["snapshot"] {
+            throw new Error("Negotiation must not probe a provider snapshot");
+          },
+          get adapter(): ProviderInstance["adapter"] {
+            throw new Error("Negotiation must not access the native adapter");
+          },
+          get textGeneration(): ProviderInstance["textGeneration"] {
+            throw new Error("Negotiation must not access text generation");
+          },
+        };
+        let registeredInstance = scenario.instance === "missing" ? undefined : instance;
+        const getInstance = vi.fn((id: ProviderInstanceId) => {
+          assert.equal(id, REVIEW_PROVIDER_INSTANCE_ID);
+          return Effect.succeed(registeredInstance);
+        });
+        const startSession = vi.fn(() => Effect.die("Negotiation must not launch a worker"));
+        yield* buildAppUnderTest({
+          config: { reviewLaunch: scenario.launch ? REVIEW_NEGOTIATION_LAUNCH : undefined },
+          layers: { providerInstanceRegistry: { getInstance }, providerService: { startSession } },
+        });
+        const { response: exchangeResponse, body } = yield* exchangeAccessToken(
+          defaultDesktopBootstrapToken,
+          { scope: "orchestration:read" },
+        );
+        assert.equal(exchangeResponse.status, 200);
+        assert.isDefined(body.access_token);
+        const response = yield* fetchEffect(
+          yield* getHttpServerUrl("/api/orchestration/review-capability"),
+          { headers: { authorization: `Bearer ${body.access_token}` } },
+        );
+        assert.equal(response.status, 200);
+        assert.deepEqual(
+          yield* responseJsonEffect<unknown>(response),
+          scenario.available ? AVAILABLE_REVIEW_CAPABILITY : UNAVAILABLE_REVIEW_CAPABILITY,
+        );
+        assert.equal(getInstance.mock.calls.length, scenario.lookups);
+        assert.equal(startSession.mock.calls.length, 0);
+        if (scenario.available) {
+          // Reconcile can remove a formerly trusted instance; startup config
+          // alone must not keep advertising a cached capability.
+          registeredInstance = undefined;
+          const revoked = yield* fetchEffect(
+            yield* getHttpServerUrl("/api/orchestration/review-capability"),
+            { headers: { authorization: `Bearer ${body.access_token}` } },
+          );
+          assert.equal(revoked.status, 200);
+          assert.deepEqual(
+            yield* responseJsonEffect<unknown>(revoked),
+            UNAVAILABLE_REVIEW_CAPABILITY,
+          );
+          assert.equal(getInstance.mock.calls.length, 2);
+          assert.equal(startSession.mock.calls.length, 0);
+        }
+      }).pipe(
+        Effect.provide(NodeHttpServer.layerTest),
+        Effect.provideService(HostProcessPlatform, scenario.platform),
+        Effect.provideService(HostProcessArchitecture, scenario.arch),
+      ),
+    );
+  }
 
   it.effect("reports unauthenticated session state without requiring auth", () =>
     Effect.gen(function* () {

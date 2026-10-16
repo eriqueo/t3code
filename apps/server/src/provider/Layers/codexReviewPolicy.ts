@@ -1,6 +1,7 @@
+import { REVIEW_MODEL_ID } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-export const CODEX_REVIEW_MODEL = "gpt-6.1-sol";
+export const CODEX_REVIEW_MODEL = REVIEW_MODEL_ID;
 export const CODEX_REVIEW_NATIVE_VERSION = "codex-cli 0.163.0";
 export const CODEX_REVIEW_NATIVE_FILES = {
   "bin/codex": "399ff69c431c066e40de318fba45c2b07f45a76b19939d247ee4828fc70c4215",

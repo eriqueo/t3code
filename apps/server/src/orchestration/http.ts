@@ -1,9 +1,13 @@
 import {
+  AVAILABLE_REVIEW_CAPABILITY,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   UNAVAILABLE_REVIEW_CAPABILITY,
 } from "@t3tools/contracts";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -17,6 +21,8 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { ServerConfig } from "../config.ts";
+import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -26,6 +32,10 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const config = yield* ServerConfig;
+    const instances = yield* ProviderInstanceRegistry;
+    const platform = yield* HostProcessPlatform;
+    const architecture = yield* HostProcessArchitecture;
 
     return handlers
       .handle(
@@ -33,7 +43,15 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.reviewCapability")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return UNAVAILABLE_REVIEW_CAPABILITY;
+          if (!config.reviewLaunch || platform !== "linux" || architecture !== "x64") {
+            return UNAVAILABLE_REVIEW_CAPABILITY;
+          }
+          const instance = yield* instances.getInstance(
+            ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+          );
+          return instance?.enabled && instance.driverKind === "codex"
+            ? AVAILABLE_REVIEW_CAPABILITY
+            : UNAVAILABLE_REVIEW_CAPABILITY;
         }),
       )
       .handle(

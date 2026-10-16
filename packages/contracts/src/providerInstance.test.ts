@@ -2,12 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  AVAILABLE_REVIEW_CAPABILITY,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
   ProviderInstanceId,
   ProviderInstanceRef,
   REVIEW_PROVIDER_INSTANCE_ID,
+  REVIEW_MODEL_ID,
   ReviewCapability,
   UNAVAILABLE_REVIEW_CAPABILITY,
 } from "./providerInstance.ts";
@@ -28,7 +30,7 @@ describe("Review capability negotiation", () => {
     reason: "containment_unverified",
   };
 
-  it("advertises only the reserved, unverified identity", () => {
+  it("preserves the version 1 reserved, unverified denial", () => {
     expect(REVIEW_PROVIDER_INSTANCE_ID).toBe("codex_review");
     expect(UNAVAILABLE_REVIEW_CAPABILITY).toEqual(expected);
     expect(decode(expected)).toEqual(expected);
@@ -50,6 +52,52 @@ describe("Review capability negotiation", () => {
 
   it.each(Object.keys(expected))("rejects omitted %s", (key) => {
     const incomplete: Record<string, unknown> = { ...expected };
+    delete incomplete[key];
+    expect(() => decode(incomplete)).toThrow();
+  });
+
+  const available = {
+    schemaVersion: 2,
+    available: true,
+    instanceId: "codex_review",
+    driver: "codex",
+    model: "gpt-6.1-sol",
+    policy: "linux-private-native-read-only-v1",
+    resultSchemaVersion: 1,
+    termination: "owned-pid-namespace-v1",
+  };
+
+  it("accepts the verified version 2 policy without widening the version 1 denial", () => {
+    expect(REVIEW_MODEL_ID).toBe("gpt-6.1-sol");
+    expect(AVAILABLE_REVIEW_CAPABILITY).toEqual(available);
+    expect(decode(available)).toEqual(available);
+    expect(() => decode({ ...expected, available: true })).toThrow();
+    expect(() => decode({ ...available, available: false })).toThrow();
+  });
+
+  it.each([
+    ["available", "true"],
+    ["available", 1],
+    ["schemaVersion", 1],
+    ["schemaVersion", 3],
+    ["schemaVersion", "2"],
+    ["schemaVersion", true],
+    ["instanceId", "codex"],
+    ["instanceId", "codex_cto"],
+    ["driver", "claudeAgent"],
+    ["model", "gpt-6-sol"],
+    ["policy", "linux-private-native-read-only-v2"],
+    ["policy", "read-only"],
+    ["resultSchemaVersion", 2],
+    ["resultSchemaVersion", "1"],
+    ["resultSchemaVersion", true],
+    ["termination", "kill-by-name"],
+  ])("rejects an unsupported available %s value %s", (key, value) => {
+    expect(() => decode({ ...available, [key]: value })).toThrow();
+  });
+
+  it.each(Object.keys(available))("rejects an available packet without %s", (key) => {
+    const incomplete: Record<string, unknown> = { ...available };
     delete incomplete[key];
     expect(() => decode(incomplete)).toThrow();
   });
