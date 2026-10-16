@@ -7,8 +7,10 @@ import {
   ApprovalRequestId,
   CodexSettings,
   EventId,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   ProviderItemId,
   type ProviderApprovalDecision,
   type ProviderEvent,
@@ -37,6 +39,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -228,6 +231,115 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getBinding: () => Effect.succeed(Option.none()),
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
+});
+
+for (const policy of ["reserved-id", "explicit-read-only"] as const) {
+  for (const violation of [
+    "resume",
+    "mcp-session",
+    "mcp-token",
+    "device-url",
+    "device-token",
+  ] as const) {
+    it.effect(
+      `Safe Review adapter ${policy} rejects ${violation} before stopping or creating a runtime`,
+      () => {
+        const runtimeFactory = makeRuntimeFactory();
+        const environment: NodeJS.ProcessEnv = {};
+        const threadId = asThreadId(`safe-review-adapter-${policy}-${violation}`);
+        const reviewInstanceId = ProviderInstanceId.make(
+          policy === "reserved-id" ? REVIEW_PROVIDER_INSTANCE_ID : "codex",
+        );
+        const layer = Layer.effect(
+          CodexAdapter,
+          makeCodexAdapter(decodeCodexSettings({}), {
+            instanceId: reviewInstanceId,
+            ...(policy === "explicit-read-only" ? { readOnly: true } : {}),
+            environment,
+            makeRuntime: runtimeFactory.factory,
+          }),
+        ).pipe(
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(providerSessionDirectoryTestLayer),
+          Layer.provideMerge(NodeServices.layer),
+        );
+        return Effect.gen(function* () {
+          const adapter = yield* CodexAdapter;
+          yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+          const existing = runtimeFactory.lastRuntime;
+          NodeAssert.ok(existing);
+          runtimeFactory.factory.mockClear();
+          existing.closeImpl.mockClear();
+          if (violation === "mcp-token") environment.T3_MCP_BEARER_TOKEN = "fixture-leftover-token";
+          if (violation === "device-url")
+            environment.AGENT_DEVICE_DAEMON_BASE_URL = "http://127.0.0.1:1";
+          if (violation === "device-token")
+            environment.AGENT_DEVICE_DAEMON_AUTH_TOKEN = "fixture-device-token";
+          if (violation === "mcp-session")
+            McpProviderSession.setMcpProviderSession({
+              environmentId: EnvironmentId.make("safe-review-fixture"),
+              threadId,
+              providerSessionId: "fixture-session",
+              providerInstanceId: reviewInstanceId,
+              endpoint: "http://127.0.0.1:1/mcp",
+              authorizationHeader: "Bearer fixture-token",
+              capabilities: new Set(["device", "preview"]),
+              agentDeviceEnvironment: { AGENT_DEVICE_DAEMON_AUTH_TOKEN: "fixture-device-token" },
+            });
+          try {
+            const result = yield* adapter
+              .startSession({
+                threadId,
+                runtimeMode: "full-access",
+                ...(violation === "resume"
+                  ? { resumeCursor: { threadId: "development-native" } }
+                  : {}),
+              })
+              .pipe(Effect.result);
+            NodeAssert.equal(result._tag, "Failure");
+            if (result._tag === "Failure")
+              NodeAssert.equal(result.failure._tag, "ProviderAdapterValidationError");
+            NodeAssert.equal(runtimeFactory.factory.mock.calls.length, 0);
+            NodeAssert.equal(existing.closeImpl.mock.calls.length, 0);
+          } finally {
+            McpProviderSession.clearMcpProviderSession(threadId);
+          }
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  }
+}
+
+it.effect("Safe Review adapter starts clean without MCP or device configuration", () => {
+  const runtimeFactory = makeRuntimeFactory();
+  const layer = Layer.effect(
+    CodexAdapter,
+    makeCodexAdapter(decodeCodexSettings({}), {
+      instanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+      readOnly: true,
+      environment: {},
+      makeRuntime: runtimeFactory.factory,
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      threadId: asThreadId("safe-review-clean"),
+      runtimeMode: "full-access",
+    });
+    const runtime = runtimeFactory.lastRuntime;
+    NodeAssert.ok(runtime);
+    NodeAssert.equal(runtime.options.readOnly, true);
+    NodeAssert.equal(runtime.options.appServerArgs, undefined);
+    NodeAssert.equal(runtime.options.mcpCapabilities, undefined);
+    NodeAssert.deepEqual(runtime.options.environment, {});
+  }).pipe(Effect.provide(layer));
 });
 
 const validationRuntimeFactory = makeRuntimeFactory();

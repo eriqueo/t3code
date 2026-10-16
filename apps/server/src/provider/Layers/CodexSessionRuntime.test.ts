@@ -2,9 +2,17 @@ import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -17,12 +25,42 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
+  makeCodexSessionRuntime,
   openCodexThread,
   readCodexThread,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+for (const policy of ["reserved-id", "explicit-read-only"] as const) {
+  it.effect(`Safe Review runtime ${policy} rejects resume before spawning a child process`, () => {
+    let spawnCount = 0;
+    const spawner = ChildProcessSpawner.make(() => {
+      spawnCount += 1;
+      return Effect.die("Review resume must fail before child spawn");
+    });
+    return Effect.gen(function* () {
+      const error = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("safe-review-before-spawn"),
+        runtimeMode: "full-access",
+        providerInstanceId: ProviderInstanceId.make(
+          policy === "reserved-id" ? REVIEW_PROVIDER_INSTANCE_ID : "codex",
+        ),
+        ...(policy === "explicit-read-only" ? { readOnly: true } : {}),
+        cwd: "/tmp",
+        binaryPath: "/unused-review-fixture-codex",
+        environment: {},
+        resumeCursor: { threadId: "development-native" },
+      }).pipe(Effect.flip);
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(spawnCount, 0);
+    }).pipe(
+      Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      Effect.provide(NodeServices.layer),
+    );
+  });
+}
 
 describe("Codex thread history", () => {
   for (const numTurns of [1, 2, 3, 5]) {
@@ -308,6 +346,19 @@ describe("buildTurnStartParams", () => {
           },
         ],
       });
+    }),
+  );
+
+  it.effect("forces a Review instance to read-only even when full access is requested", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "review-thread",
+        runtimeMode: "full-access",
+        readOnly: true,
+        prompt: "Review evidence",
+      });
+      NodeAssert.equal(params.approvalPolicy, "never");
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, { type: "readOnly", networkAccess: false });
     }),
   );
 
@@ -872,6 +923,59 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("starts read-only without a user approval even when full access was requested", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      yield* openCodexThread({
+        client: {
+          request: (method, params) => {
+            calls.push({ method, params });
+            return Effect.succeed(makeThreadOpenResponse("review-thread"));
+          },
+          raw: { request: () => Effect.die("Review must not resume") },
+        },
+        threadId: ThreadId.make("review-thread"),
+        runtimeMode: "full-access",
+        readOnly: true,
+        cwd: "/tmp/project",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/start",
+          params: {
+            cwd: "/tmp/project",
+            approvalPolicy: "never",
+            sandbox: "read-only",
+            approvalsReviewer: "user",
+          },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("rejects a read-only resume before either resume or fresh-start RPC", () =>
+    Effect.gen(function* () {
+      const error = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("Review resume must not fall back to a new thread"),
+          raw: { request: () => Effect.die("Review must not resume an existing thread") },
+        },
+        threadId: ThreadId.make("review-thread"),
+        runtimeMode: "full-access",
+        readOnly: true,
+        cwd: "/tmp/project",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: "development-thread",
+      }).pipe(Effect.flip);
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.method, "thread/resume");
+    }),
+  );
+
   it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
       const response = makeThreadOpenResponse("saved-thread");

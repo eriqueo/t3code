@@ -25,6 +25,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  REVIEW_PROVIDER_INSTANCE_ID,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -419,6 +420,9 @@ function makeProviderServiceLayer(
     readonly supportsConversationRollback?: boolean;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly issueMcpCredential?: NonNullable<
+      Parameters<typeof makeProviderServiceLive>[0]
+    >["issueMcpCredential"];
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -446,7 +450,7 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive({ issueMcpCredential: input.issueMcpCredential }).pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -985,6 +989,175 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const reviewInstanceId = ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID);
+const safeReviewDevelopment = makeFakeCodexAdapter();
+const safeReviewAdapter = makeFakeCodexAdapter();
+const safeReviewIssueCredential = vi.fn(() => Effect.succeed(undefined));
+const safeReviewRegistry = makeStaticInstanceRegistry([
+  [codexInstanceId, safeReviewDevelopment.adapter],
+  [reviewInstanceId, safeReviewAdapter.adapter],
+]);
+const safeReview = makeProviderServiceLayer({
+  issueMcpCredential: safeReviewIssueCredential,
+  registry: {
+    ...safeReviewRegistry,
+    // Equal native identities must not permit crossing the reserved boundary.
+    getInstanceInfo: (instanceId) =>
+      safeReviewRegistry.getInstanceInfo(instanceId).pipe(
+        Effect.map((info) => ({
+          ...info,
+          continuationIdentity: {
+            driverKind: CODEX_DRIVER,
+            continuationKey: "codex:shared-fixture",
+          },
+        })),
+      ),
+  },
+});
+safeReview.layer("Safe Review provider boundary", (it) => {
+  const cases: Array<{
+    name: string;
+    target: ProviderInstanceId;
+    owner?: ProviderInstanceId;
+    explicit?: boolean;
+    persisted?: boolean;
+  }> = [
+    { name: "explicit resume", target: reviewInstanceId, explicit: true },
+    {
+      name: "persisted review resume",
+      owner: reviewInstanceId,
+      target: reviewInstanceId,
+      persisted: true,
+    },
+    ...[false, true].flatMap((persisted) => [
+      {
+        name: `development to review cursor=${persisted}`,
+        owner: codexInstanceId,
+        target: reviewInstanceId,
+        persisted,
+      },
+      {
+        name: `review to development cursor=${persisted}`,
+        owner: reviewInstanceId,
+        target: codexInstanceId,
+        persisted,
+      },
+    ]),
+  ];
+  for (const scenario of cases) {
+    it.effect(`rejects ${scenario.name} before stopping, credentials or start`, () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const threadId = asThreadId(`safe-review-${scenario.name}`);
+        const cursor = { threadId: "existing-development-native-thread" };
+        const owner =
+          scenario.owner === reviewInstanceId ? safeReviewAdapter : safeReviewDevelopment;
+        if (scenario.owner !== undefined) {
+          yield* owner.startSession({
+            threadId,
+            providerInstanceId: scenario.owner,
+            runtimeMode: "full-access",
+          });
+          yield* directory.upsert({
+            threadId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: scenario.owner,
+            status: "running",
+            runtimeMode: "full-access",
+            ...(scenario.persisted ? { resumeCursor: cursor } : {}),
+          });
+        }
+        const before = yield* directory.getBinding(threadId);
+        for (const adapter of [safeReviewDevelopment, safeReviewAdapter]) {
+          adapter.startSession.mockClear();
+          adapter.stopSession.mockClear();
+          adapter.sendTurn.mockClear();
+        }
+        safeReviewIssueCredential.mockClear();
+        const error = yield* provider
+          .startSession(threadId, {
+            threadId,
+            providerInstanceId: scenario.target,
+            runtimeMode: "full-access",
+            ...(scenario.explicit ? { resumeCursor: cursor } : {}),
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderValidationError");
+        assert.deepEqual(yield* directory.getBinding(threadId), before);
+        assert.equal(safeReviewIssueCredential.mock.calls.length, 0);
+        for (const adapter of [safeReviewDevelopment, safeReviewAdapter]) {
+          assert.equal(adapter.startSession.mock.calls.length, 0);
+          assert.equal(adapter.stopSession.mock.calls.length, 0);
+          assert.equal(adapter.sendTurn.mock.calls.length, 0);
+        }
+        if (scenario.owner !== undefined) assert.equal(yield* owner.hasSession(threadId), true);
+      }),
+    );
+  }
+
+  it.effect("starts fresh review and reuses its live session without issuing MCP credentials", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("safe-review-fresh-live");
+      safeReviewIssueCredential.mockClear();
+      safeReviewAdapter.startSession.mockClear();
+      safeReviewAdapter.sendTurn.mockClear();
+      yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: reviewInstanceId,
+        runtimeMode: "full-access",
+      });
+      for (const input of ["first review", "follow-up review"]) {
+        yield* provider.sendTurn({
+          threadId,
+          input,
+          attachments: [],
+          modelSelection: createModelSelection(reviewInstanceId, "gpt-5.6-sol"),
+        });
+      }
+      assert.equal(safeReviewAdapter.startSession.mock.calls.length, 1);
+      assert.equal(safeReviewAdapter.sendTurn.mock.calls.length, 2);
+      assert.equal(safeReviewIssueCredential.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects lost review recovery before credentials or replacement start", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("safe-review-lost-runtime");
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: reviewInstanceId,
+        status: "stopped",
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "old-review-native" },
+      });
+      const before = yield* directory.getBinding(threadId);
+      safeReviewIssueCredential.mockClear();
+      safeReviewAdapter.startSession.mockClear();
+      safeReviewAdapter.stopSession.mockClear();
+      safeReviewAdapter.sendTurn.mockClear();
+      const error = yield* provider
+        .sendTurn({
+          threadId,
+          input: "resume review",
+          attachments: [],
+          modelSelection: createModelSelection(reviewInstanceId, "gpt-5.6-sol"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderValidationError");
+      assert.deepEqual(yield* directory.getBinding(threadId), before);
+      assert.equal(safeReviewIssueCredential.mock.calls.length, 0);
+      assert.equal(safeReviewAdapter.startSession.mock.calls.length, 0);
+      assert.equal(safeReviewAdapter.stopSession.mock.calls.length, 0);
+      assert.equal(safeReviewAdapter.sendTurn.mock.calls.length, 0);
+    }),
+  );
+});
 
 const routing = makeProviderServiceLayer();
 

@@ -29,6 +29,15 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const encodeReviewWireScript = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeRecordedSessionRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      method: Schema.String,
+      params: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+  ),
+);
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -166,6 +175,66 @@ const peerPath = NodePath.join(
 );
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect(
+    "keeps the internal read-only policy on the session and successive native turn RPCs",
+    () =>
+      Effect.gen(function* () {
+        const requestPath = `${scriptPath}.session-requests`;
+        const script = yield* encodeReviewWireScript({
+          rootThreadId: ROOT,
+          recordSessionRequests: true,
+          notifications: [],
+        });
+        NodeFS.writeFileSync(scriptPath, script, "utf8");
+        NodeFS.rmSync(requestPath, { force: true });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            NodeFS.rmSync(scriptPath, { force: true });
+            NodeFS.rmSync(requestPath, { force: true });
+          }),
+        );
+        const runtime = yield* makeCodexSessionRuntime({
+          threadId: ThreadId.make("review-wire-fixture"),
+          binaryPath: peerPath,
+          cwd: NodeOS.tmpdir(),
+          runtimeMode: "full-access",
+          readOnly: true,
+          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        });
+        yield* runtime.start();
+        for (const input of ["first fixture turn", "second fixture turn"]) {
+          const completed = yield* runtime.events.pipe(
+            Stream.filter((event) => event.method === "turn/completed"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+          yield* runtime.sendTurn({ input });
+          yield* Fiber.join(completed);
+        }
+        const requests = yield* Effect.forEach(
+          NodeFS.readFileSync(requestPath, "utf8").trim().split("\n"),
+          (line) => decodeRecordedSessionRequest(line),
+        );
+        assert.deepEqual(
+          requests.map((request) => request.method),
+          ["thread/start", "turn/start", "turn/start"],
+        );
+        assert.equal(requests[0]?.params.sandbox, "read-only");
+        for (const request of requests) {
+          assert.equal(request.params.approvalPolicy, "never");
+          assert.equal(request.params.approvalsReviewer, "user");
+          if (request.method === "turn/start") {
+            assert.deepEqual(request.params.sandboxPolicy, {
+              type: "readOnly",
+              networkAccess: false,
+            });
+          }
+        }
+        yield* runtime.close;
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("looks up child model metadata once after activity registration", () =>
     Effect.gen(function* () {
       const script = {

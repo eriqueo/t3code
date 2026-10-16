@@ -24,6 +24,7 @@ import {
   type SnapShotAccessibilityNode,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderSessionStartInput,
+  REVIEW_PROVIDER_INSTANCE_ID,
   ProviderStopSessionInput,
   ProviderUploadFeedbackInput,
   ThreadId,
@@ -1229,6 +1230,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly operation: string;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
+    const isReview = bindingInstanceId === REVIEW_PROVIDER_INSTANCE_ID;
+    if (isReview && input.binding.provider !== "codex") {
+      return yield* toValidationError(
+        input.operation,
+        "Review requires the reserved Codex instance.",
+      );
+    }
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "recover-session",
       "provider.kind": input.binding.provider,
@@ -1257,6 +1265,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           });
           return { adapter, session: existing } as const;
         }
+      }
+
+      if (isReview) {
+        return yield* toValidationError(
+          input.operation,
+          "Review cannot resume a lost provider session. Start a fresh Review attempt.",
+        );
       }
 
       if (!hasResumeCursor) {
@@ -1406,6 +1421,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "ProviderService.startSession",
         parsed,
       );
+      const isReview = resolvedInstanceId === REVIEW_PROVIDER_INSTANCE_ID;
+      if (isReview && parsed.resumeCursor != null) {
+        return yield* toValidationError(
+          "ProviderService.startSession",
+          "Review cannot resume an existing provider thread.",
+        );
+      }
       let metricProvider = parsed.provider ?? String(resolvedInstanceId);
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "start-session",
@@ -1417,6 +1439,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const instanceInfo = yield* registry.getInstanceInfo(resolvedInstanceId);
         const resolvedProvider = instanceInfo.driverKind;
         metricProvider = resolvedProvider;
+        if (isReview && resolvedProvider !== "codex") {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            "Review requires the reserved Codex instance.",
+          );
+        }
         if (parsed.provider !== undefined && parsed.provider !== resolvedProvider) {
           return yield* toValidationError(
             "ProviderService.startSession",
@@ -1435,6 +1463,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        if (
+          persistedBinding &&
+          persistedBinding.providerInstanceId !== resolvedInstanceId &&
+          (isReview || persistedBinding.providerInstanceId === REVIEW_PROVIDER_INSTANCE_ID)
+        ) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            "Review cannot switch to or from a development provider instance.",
+          );
+        }
+        if (isReview && persistedBinding?.resumeCursor != null) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            "Review cannot resume persisted provider state. Start a fresh Review attempt.",
+          );
+        }
         if (
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&
@@ -1507,7 +1551,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId,
           currentInstanceId: resolvedInstanceId,
         });
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        if (!isReview) yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
           .startSession({
             ...input,
@@ -1515,7 +1559,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
           })
-          .pipe(Effect.onError(() => clearMcpSession(threadId)));
+          .pipe(Effect.onError(() => (isReview ? Effect.void : clearMcpSession(threadId))));
 
         if (session.provider !== adapter.provider) {
           yield* clearMcpSession(threadId);

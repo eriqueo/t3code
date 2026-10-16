@@ -28,6 +28,12 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  if (script.recordSessionRequests && (method === "thread/start" || method === "turn/start")) {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.session-requests`,
+      `${JSON.stringify({ method, params: message.params })}\n`,
+    );
+  }
   if (method === undefined && script.serverRequests?.some((request) => request.id === id)) {
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.responses`,
