@@ -2199,6 +2199,81 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("requires authentication for Review capability negotiation", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const response = yield* fetchEffect(
+        yield* getHttpServerUrl("/api/orchestration/review-capability"),
+      );
+      assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires orchestration read scope for Review capability negotiation", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const { response: exchangeResponse, body } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      assert.isDefined(body.access_token);
+      const response = yield* fetchEffect(
+        yield* getHttpServerUrl("/api/orchestration/review-capability"),
+        { headers: { authorization: `Bearer ${body.access_token}` } },
+      );
+      assert.equal(response.status, 403);
+      const failure = yield* responseJsonEffect<{ readonly requiredScope: string }>(response);
+      assert.equal(failure.requiredScope, "orchestration:read");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps Review capability unavailable despite enabled provider settings", () =>
+    Effect.gen(function* () {
+      const startSession = vi.fn(() => Effect.die("Negotiation must not launch a worker"));
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: { startSession },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [ProviderInstanceId.make("codex_cto")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  enabled: true,
+                },
+                [ProviderInstanceId.make("codex_review")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  enabled: true,
+                  config: { launchArgs: "--yolo", homePath: "/untrusted/home" },
+                },
+              },
+            }),
+          },
+        },
+      });
+      const { response: exchangeResponse, body } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "orchestration:read" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      assert.isDefined(body.access_token);
+      const response = yield* fetchEffect(
+        yield* getHttpServerUrl("/api/orchestration/review-capability"),
+        { headers: { authorization: `Bearer ${body.access_token}` } },
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(yield* responseJsonEffect<unknown>(response), {
+        schemaVersion: 1,
+        available: false,
+        instanceId: "codex_review",
+        driver: "codex",
+        reason: "containment_unverified",
+      });
+      assert.equal(startSession.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("reports unauthenticated session state without requiring auth", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

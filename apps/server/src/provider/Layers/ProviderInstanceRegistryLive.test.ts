@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -59,6 +60,96 @@ import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as CodexResetCredit from "./codexResetCredit.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import type { ProviderDriver } from "../ProviderDriver.ts";
+
+describe("reserved Review instance admission", () => {
+  const reservedId = ProviderInstanceId.make("codex_review");
+  const cases: ReadonlyArray<{
+    driver: string;
+    enabled?: boolean;
+    config?: unknown;
+  }> = [
+    { driver: "codex", enabled: true },
+    { driver: "codex", enabled: false },
+    { driver: "codex" },
+    { driver: "claudeAgent", enabled: true },
+    { driver: "claudeAgent", enabled: false },
+    { driver: "fork_driver", enabled: true },
+    { driver: "unknown_driver", enabled: true },
+    {
+      driver: "codex",
+      enabled: true,
+      config: { binaryPath: "/untrusted/codex", homePath: "/untrusted/home", launchArgs: "--yolo" },
+    },
+  ];
+
+  const sentinelDrivers = (calls: Array<string>) =>
+    ["codex", "claudeAgent", "fork_driver"].map((name): ProviderDriver<unknown, never> => ({
+      driverKind: ProviderDriverKind.make(name),
+      metadata: { displayName: name },
+      configSchema: Schema.Unknown,
+      defaultConfig: () => ({}),
+      create: ({ instanceId }) =>
+        Effect.suspend(() => {
+          calls.push(instanceId);
+          return Effect.fail(
+            new ProviderDriverError({
+              driver: ProviderDriverKind.make(name),
+              instanceId,
+              detail: "Sentinel: no filesystem or process effects.",
+            }),
+          );
+        }),
+    }));
+
+  for (const admission of ["initial", "reconcile"] as const) {
+    it.effect(`rejects reserved Review before driver creation during ${admission} admission`, () =>
+      Effect.gen(function* () {
+        for (const entry of cases) {
+          const calls: Array<string> = [];
+          const configMap: ProviderInstanceConfigMap = {
+            [reservedId]: {
+              ...entry,
+              driver: ProviderDriverKind.make(entry.driver),
+              displayName: "Misleading development profile",
+              environment: [
+                { name: "T3CODE_CODEX_LAUNCH_ARGS", value: "--yolo", sensitive: false },
+              ],
+            },
+          };
+          const { registry, mutator } = yield* makeProviderInstanceRegistry({
+            drivers: sentinelDrivers(calls),
+            configMap: admission === "initial" ? configMap : {},
+          });
+          if (admission === "reconcile") yield* mutator.reconcile(configMap);
+          expect(calls).toEqual([]);
+          expect(yield* registry.getInstance(reservedId)).toBeUndefined();
+          expect(yield* registry.listInstances).toEqual([]);
+          expect(yield* registry.listUnavailable).toMatchObject([
+            { instanceId: "codex_review", displayName: "Review", availability: "unavailable" },
+          ]);
+        }
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect("still calls a driver for an ordinary development identity", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      yield* makeProviderInstanceRegistry({
+        drivers: sentinelDrivers(calls),
+        configMap: {
+          [ProviderInstanceId.make("codex_personal")]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+          },
+        },
+      });
+      expect(calls).toEqual(["codex_personal"]);
+    }).pipe(Effect.scoped),
+  );
+});
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,

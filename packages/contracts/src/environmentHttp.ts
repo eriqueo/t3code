@@ -47,6 +47,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ReviewCapability } from "./providerInstance.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -521,6 +522,13 @@ const EnvironmentOrchestrationThreadSnapshotQuery = {
 };
 
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+  .add(
+    HttpApiEndpoint.get("reviewCapability", "/api/orchestration/review-capability", {
+      headers: OptionalBearerHeaders,
+      success: ReviewCapability,
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("snapshot", "/api/orchestration/snapshot", {
       headers: OptionalBearerHeaders,

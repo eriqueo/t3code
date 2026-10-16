@@ -7,6 +7,9 @@ import {
   ProviderInstanceConfigMap,
   ProviderInstanceId,
   ProviderInstanceRef,
+  REVIEW_PROVIDER_INSTANCE_ID,
+  ReviewCapability,
+  UNAVAILABLE_REVIEW_CAPABILITY,
 } from "./providerInstance.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
@@ -14,6 +17,43 @@ const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
 const decodeProviderInstanceRef = Schema.decodeUnknownSync(ProviderInstanceRef);
 const decodeProviderInstanceConfig = Schema.decodeUnknownSync(ProviderInstanceConfig);
 const decodeProviderInstanceConfigMap = Schema.decodeUnknownSync(ProviderInstanceConfigMap);
+
+describe("Review capability negotiation", () => {
+  const decode = Schema.decodeUnknownSync(ReviewCapability);
+  const expected = {
+    schemaVersion: 1,
+    available: false,
+    instanceId: "codex_review",
+    driver: "codex",
+    reason: "containment_unverified",
+  };
+
+  it("advertises only the reserved, unverified identity", () => {
+    expect(REVIEW_PROVIDER_INSTANCE_ID).toBe("codex_review");
+    expect(UNAVAILABLE_REVIEW_CAPABILITY).toEqual(expected);
+    expect(decode(expected)).toEqual(expected);
+  });
+
+  it.each([
+    ["available", true],
+    ["available", "false"],
+    ["available", 0],
+    ["schemaVersion", true],
+    ["schemaVersion", "1"],
+    ["schemaVersion", 2],
+    ["instanceId", "codex_cto"],
+    ["driver", "claudeAgent"],
+    ["reason", "ready"],
+  ])("rejects an unsupported %s value %s", (key, value) => {
+    expect(() => decode({ ...expected, [key]: value })).toThrow();
+  });
+
+  it.each(Object.keys(expected))("rejects omitted %s", (key) => {
+    const incomplete: Record<string, unknown> = { ...expected };
+    delete incomplete[key];
+    expect(() => decode(incomplete)).toThrow();
+  });
+});
 
 describe("provider slug validation (shared by driver + instance ids)", () => {
   const cases = [

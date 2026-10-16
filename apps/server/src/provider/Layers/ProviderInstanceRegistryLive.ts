@@ -35,6 +35,7 @@
 import {
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   type ProviderDriverKind,
@@ -128,6 +129,19 @@ const buildEntry = <R>(input: {
 > =>
   Effect.gen(function* () {
     const { driversById, parentScope, instanceId, rawInstanceId, entry } = input;
+    // Settings must not materialize probes, homes or adapters under this
+    // reserved identity before the native containment gate is verified.
+    if (instanceId === REVIEW_PROVIDER_INSTANCE_ID) {
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: "Review",
+          reason: "Review containment is unverified; this reserved instance cannot launch.",
+        }),
+      };
+    }
     const driver = driversById.get(entry.driver);
     if (!driver) {
       return {

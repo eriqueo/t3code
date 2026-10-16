@@ -82,6 +82,28 @@ export const isProviderDriverKind = (value: unknown): value is ProviderDriverKin
 export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
 
+export const REVIEW_PROVIDER_INSTANCE_ID = "codex_review";
+
+// Version 1 reports the containment gate only. It cannot authorize a launch.
+// Replace this denial contract only after native isolation/result/termination
+// evidence exists; a settings entry or runtime-mode label is insufficient.
+export const ReviewCapability = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  available: Schema.Literal(false),
+  instanceId: Schema.Literal(REVIEW_PROVIDER_INSTANCE_ID),
+  driver: Schema.Literal("codex"),
+  reason: Schema.Literal("containment_unverified"),
+});
+export type ReviewCapability = typeof ReviewCapability.Type;
+
+export const UNAVAILABLE_REVIEW_CAPABILITY: ReviewCapability = Object.freeze({
+  schemaVersion: 1,
+  available: false,
+  instanceId: REVIEW_PROVIDER_INSTANCE_ID,
+  driver: "codex",
+  reason: "containment_unverified",
+});
+
 /**
  * Lightweight reference identifying which driver implements an instance.
  * Carried alongside `ProviderInstanceId` on wire shapes so consumers can
