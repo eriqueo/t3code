@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import {
   type ClientOrchestrationCommand,
   type UserInputAttachments,
@@ -10,6 +11,7 @@ import {
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  REVIEW_PROVIDER_INSTANCE_ID,
 } from "@t3tools/contracts";
 
 import {
@@ -22,6 +24,8 @@ import {
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { isReviewThread } from "../provider/reviewPolicy.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -82,6 +86,29 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+
+    if (canonicalCommand.type === "thread.turn.start" && canonicalCommand.bootstrap) {
+      const query = yield* ProjectionSnapshotQuery;
+      const currentThread = yield* query.getThreadShellById(canonicalCommand.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationDispatchCommandError({
+              message: "Could not inspect the bootstrap thread.",
+              cause,
+            }),
+        ),
+      );
+      if (
+        isReviewThread(Option.getOrUndefined(currentThread)) ||
+        canonicalCommand.modelSelection?.instanceId === REVIEW_PROVIDER_INSTANCE_ID ||
+        canonicalCommand.bootstrap.createThread?.modelSelection.instanceId ===
+          REVIEW_PROVIDER_INSTANCE_ID
+      ) {
+        return yield* new OrchestrationDispatchCommandError({
+          message: "Review cannot prepare worktrees or run project setup scripts.",
+        });
+      }
+    }
 
     const normalizeProjectWorkspaceRoot = (workspaceRoot: string) =>
       workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(

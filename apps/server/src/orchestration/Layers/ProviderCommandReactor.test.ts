@@ -13,6 +13,7 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   ProviderSetupError,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -50,6 +51,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import {
   ProviderAdapterRequestError,
   ProviderWorkspaceMissingError,
+  ProviderValidationError,
   type ProviderServiceError,
 } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -907,6 +909,73 @@ describe("ProviderCommandReactor", () => {
       );
     }),
   );
+
+  for (const admission of ["accepted", "rejected"] as const) {
+    it(`Safe Review ${admission} admission runs no checkout repair, branch or title helpers`, async () => {
+      const reviewInstanceId = ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID);
+      const harness = await createHarness({
+        threadModelSelection: { instanceId: reviewInstanceId, model: "gpt-6.1-sol" },
+        ...(admission === "rejected"
+          ? {
+              startSessionEffect: () =>
+                Effect.fail(
+                  new ProviderValidationError({
+                    operation: "startSession",
+                    issue: "Disposable fixture rejects provider admission",
+                  }),
+                ),
+            }
+          : {}),
+      });
+      const missingWorktree = NodePath.join(harness.stateDir, "missing-review-worktree");
+      harness.generateBranchName.mockReturnValue(
+        Effect.succeed({ branch: "forbidden-review-rename" }),
+      );
+      harness.generateThreadTitle.mockReturnValue(
+        Effect.succeed({ title: "Forbidden auxiliary title" }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("safe-review-worktree-meta"),
+          threadId: ThreadId.make("thread-1"),
+          title: "New thread",
+          branch: "t3code/deadbeef",
+          worktreePath: missingWorktree,
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("safe-review-no-host-effects"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("safe-review-host-effects-message"),
+            role: "user",
+            text: "Inspect this project",
+            attachments: [],
+          },
+          titleSeed: "New thread",
+          modelSelection: { instanceId: reviewInstanceId, model: "gpt-6.1-sol" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.drain();
+      expect(harness.pruneWorktrees).not.toHaveBeenCalled();
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.renameBranch).not.toHaveBeenCalled();
+      expect(harness.generateBranchName).not.toHaveBeenCalled();
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+      expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
+      expect(harness.refreshStatus).not.toHaveBeenCalled();
+      expect(NodeFS.existsSync(missingWorktree)).toBe(false);
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+      expect(thread?.branch).toBe("t3code/deadbeef");
+      expect(thread?.title).toBe("New thread");
+    });
+  }
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();

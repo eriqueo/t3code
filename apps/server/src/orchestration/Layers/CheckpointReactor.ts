@@ -3,6 +3,7 @@ import {
   type CheckpointRef,
   EventId,
   MessageId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   type ProjectId,
   ThreadId,
   TurnId,
@@ -28,6 +29,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { isReviewThread } from "../../provider/reviewPolicy.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -820,12 +822,28 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
+      if (
+        isReviewThread(yield* resolveThreadDetail(event.payload.threadId)) ||
+        (event.type === "thread.turn-start-requested" &&
+          event.payload.modelSelection?.instanceId === REVIEW_PROVIDER_INSTANCE_ID)
+      ) {
+        return;
+      }
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
       return;
     }
 
     if (event.type === "thread.checkpoint-revert-requested") {
+      if (isReviewThread(yield* resolveThreadDetail(event.payload.threadId))) {
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail: "Review cannot restore project files or checkpoints.",
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
       yield* handleRevertRequested(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
@@ -848,6 +866,24 @@ const make = Effect.gen(function* () {
     if (event.type === "session.exited") {
       startedTurns.delete(event.threadId);
       pending.delete(event.threadId);
+      return;
+    }
+
+    if (
+      event.providerInstanceId === REVIEW_PROVIDER_INSTANCE_ID ||
+      isReviewThread(yield* resolveThreadDetail(event.threadId))
+    ) {
+      startedTurns.delete(event.threadId);
+      pending.delete(event.threadId);
+      if ((event.type === "turn.completed" || event.type === "turn.aborted") && event.turnId) {
+        yield* receiptBus.publish({
+          type: "turn.processing.quiesced",
+          threadId: event.threadId,
+          turnId: TurnId.make(String(event.turnId)),
+          checkpointTurnCount: 0,
+          createdAt: event.createdAt,
+        });
+      }
       return;
     }
 

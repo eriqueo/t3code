@@ -17,6 +17,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -300,6 +301,7 @@ describe("CheckpointReactor", () => {
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
+    readonly providerInstanceId?: ProviderInstanceId;
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
@@ -430,7 +432,7 @@ describe("CheckpointReactor", () => {
           projectId: asProjectId("project-1"),
           title: "Thread",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
+            instanceId: options?.providerInstanceId ?? ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -495,6 +497,83 @@ describe("CheckpointReactor", () => {
       nextReceipt: Queue.take(receipts),
       pullRequestRefreshes,
     };
+  }
+
+  for (const trigger of [
+    "domain-start",
+    "runtime-start",
+    "runtime-completion",
+    "runtime-completion-checkout",
+  ] as const) {
+    effectIt.effect(
+      `Safe Review ${trigger} never writes checkout checkpoint refs or runs refresh helpers`,
+      () =>
+        Effect.gen(function* () {
+          const localRefreshes: string[] = [];
+          const pullRequestRefreshes: string[] = [];
+          const harness = yield* Effect.promise(() =>
+            createHarness({
+              seedFilesystemCheckpoints: false,
+              providerInstanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+              ...(trigger === "runtime-completion-checkout"
+                ? {}
+                : { providerSessionCwd: "/disposable-neutral-review-cwd" }),
+              gitStatusRefreshCalls: localRefreshes,
+              pullRequestRefreshCalls: pullRequestRefreshes,
+            }),
+          );
+          const threadId = ThreadId.make("thread-1");
+          const before = runGit(harness.cwd, ["for-each-ref", "--format=%(refname) %(objectname)"]);
+          if (trigger === "domain-start") {
+            yield* harness.engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make("safe-review-checkpoint-start"),
+              threadId,
+              message: {
+                messageId: MessageId.make("safe-review-checkpoint-message"),
+                role: "user",
+                text: "Inspect this project",
+                attachments: [],
+              },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+                model: "gpt-6.1-sol",
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "full-access",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            });
+          } else {
+            harness.provider.emit({
+              type: trigger === "runtime-start" ? "turn.started" : "turn.completed",
+              eventId: EventId.make(`safe-review-${trigger}`),
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+              threadId,
+              turnId: asTurnId("safe-review-turn"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              ...(trigger.startsWith("runtime-completion")
+                ? { payload: { state: "completed" } }
+                : {}),
+            });
+          }
+          yield* Effect.promise(harness.drain);
+          expect(runGit(harness.cwd, ["for-each-ref", "--format=%(refname) %(objectname)"])).toBe(
+            before,
+          );
+          expect(localRefreshes).toEqual([]);
+          expect(pullRequestRefreshes).toEqual([]);
+          expect(harness.pullRequestRefreshes).toEqual([]);
+          if (trigger.startsWith("runtime-completion")) {
+            expect(yield* harness.nextReceipt).toMatchObject({
+              type: "turn.processing.quiesced",
+              threadId,
+              turnId: "safe-review-turn",
+              checkpointTurnCount: 0,
+            });
+          }
+        }),
+    );
   }
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>

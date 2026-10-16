@@ -9,6 +9,7 @@ import {
   type MessageId,
   type OrchestrationEvent,
   ProviderDriverKind,
+  REVIEW_PROVIDER_INSTANCE_ID,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
@@ -48,6 +49,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { isReviewThread } from "../../provider/reviewPolicy.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -1340,6 +1342,29 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const requestedInstanceId =
+      event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId;
+    const isReview = isReviewThread(thread) || requestedInstanceId === REVIEW_PROVIDER_INSTANCE_ID;
+    if (
+      isReview &&
+      (thread.modelSelection.instanceId !== REVIEW_PROVIDER_INSTANCE_ID ||
+        requestedInstanceId !== REVIEW_PROVIDER_INSTANCE_ID ||
+        (thread.session !== null &&
+          thread.session.providerInstanceId !== REVIEW_PROVIDER_INSTANCE_ID))
+    ) {
+      return yield* appendTurnStartFailure(
+        "Review could not start",
+        "Review requires a fresh thread and cannot switch provider instances.",
+      );
+    }
+    const isCompactCommand = isCompactCommandMessage(message);
+    if (isReview && isCompactCommand) {
+      return yield* appendTurnStartFailure(
+        "Review could not start",
+        "Review cannot compact or resume a conversation.",
+      );
+    }
+
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
@@ -1367,86 +1392,87 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const authCommandHandled = yield* Effect.gen(function* () {
-      // Native account commands belong to the thread's existing provider session.
-      const instanceId =
-        thread.session?.providerInstanceId ??
-        event.payload.modelSelection?.instanceId ??
-        thread.modelSelection.instanceId;
-      const handled = yield* providerAuthService.tryHandlePromptCommand({
-        instanceId,
-        text: message.text,
-        hasAttachments: (message.attachments?.length ?? 0) > 0,
-      });
-      if (!handled) {
-        return false;
+    if (!isReview) {
+      const authCommandHandled = yield* Effect.gen(function* () {
+        // Native account commands belong to the thread's existing provider session.
+        const instanceId =
+          thread.session?.providerInstanceId ??
+          event.payload.modelSelection?.instanceId ??
+          thread.modelSelection.instanceId;
+        const handled = yield* providerAuthService.tryHandlePromptCommand({
+          instanceId,
+          text: message.text,
+          hasAttachments: (message.attachments?.length ?? 0) > 0,
+        });
+        if (!handled) {
+          return false;
+        }
+
+        const instanceInfo = yield* providerService.getInstanceInfo(instanceId);
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "stopped",
+            providerName: instanceInfo.driverKind,
+            providerInstanceId: instanceId,
+            runtimeMode: thread.runtimeMode,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        });
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* serverCommandId("provider-sign-out"),
+          threadId: thread.id,
+          activity: {
+            id: yield* serverEventId(),
+            tone: "info",
+            kind: "provider.auth.signed-out",
+            summary: "Provider signed out",
+            payload: { providerInstanceId: instanceId },
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        });
+        return true;
+      }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
+      if (authCommandHandled) {
+        return;
       }
 
-      const instanceInfo = yield* providerService.getInstanceInfo(instanceId);
-      yield* setThreadSession({
-        threadId: thread.id,
-        session: {
-          threadId: thread.id,
-          status: "stopped",
-          providerName: instanceInfo.driverKind,
-          providerInstanceId: instanceId,
-          runtimeMode: thread.runtimeMode,
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: yield* serverCommandId("provider-sign-out"),
-        threadId: thread.id,
-        activity: {
-          id: yield* serverEventId(),
-          tone: "info",
-          kind: "provider.auth.signed-out",
-          summary: "Provider signed out",
-          payload: { providerInstanceId: instanceId },
-          turnId: null,
-          createdAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      return true;
-    }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
-    if (authCommandHandled) {
-      return;
-    }
+      yield* ensureThreadWorktree(thread);
 
-    yield* ensureThreadWorktree(thread);
+      if (!hasOtherUserMessages && !isCompactCommand) {
+        const project = yield* resolveProject(thread.projectId);
+        const generationCwd =
+          resolveThreadWorkspaceCwd({
+            thread,
+            projects: project ? [project] : [],
+          }) ?? process.cwd();
+        const generationInput = {
+          messageText: assistantCitationsToPlainText(message.text),
+          ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+          ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+        };
 
-    const isCompactCommand = isCompactCommandMessage(message);
-    if (!hasOtherUserMessages && !isCompactCommand) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
-      const generationInput = {
-        messageText: assistantCitationsToPlainText(message.text),
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-        ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
-      };
-
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        yield* maybeGenerateThreadTitleForFirstTurn({
+        yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
           threadId: event.payload.threadId,
-          cwd: generationCwd,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
           ...generationInput,
         }).pipe(Effect.forkScoped);
+
+        if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+          yield* maybeGenerateThreadTitleForFirstTurn({
+            threadId: event.payload.threadId,
+            cwd: generationCwd,
+            ...generationInput,
+          }).pipe(Effect.forkScoped);
+        }
       }
     }
 

@@ -11,6 +11,7 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
+  type ClientOrchestrationCommand,
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
   EnvironmentId,
@@ -34,6 +35,7 @@ import {
   type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   type ProviderInstallState,
   ProviderSetupError,
   ResolvedKeybindingRule,
@@ -10556,6 +10558,162 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const transport of ["HTTP", "WS"] as const) {
+    it.effect.each(["command", "bootstrap", "persisted selection", "active session"] as const)(
+      `refuses Review bootstrap from $0 over ${transport} before workspace effects`,
+      (source) =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.make("thread-review-bootstrap");
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const reviewSelection = {
+            ...defaultModelSelection,
+            instanceId: ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID),
+          };
+          const dispatch = vi.fn(() => Effect.succeed({ sequence: 1 }));
+          const fetchRemote = vi.fn(() => Effect.void);
+          const createWorktree = vi.fn(() =>
+            Effect.succeed({
+              worktree: { refName: "t3code/review-fixture", path: "/tmp/review-fixture" },
+            }),
+          );
+          const runForThread = vi.fn(() => Effect.succeed({ status: "no-script" as const }));
+          const config = yield* buildAppUnderTest({
+            layers: {
+              vcsDriver: { isInsideWorkTree: () => Effect.succeed(true) },
+              gitVcsDriver: {
+                execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
+                remoteExists: () => Effect.succeed(true),
+                remoteBranchExists: () => Effect.succeed(true),
+                resolveRemoteTrackingCommit: () =>
+                  Effect.succeed({
+                    commitSha: "0123456789abcdef0123456789abcdef01234567",
+                    remoteRefName: "origin/main",
+                  }),
+                fetchRemote,
+                createWorktree,
+              },
+              orchestrationEngine: { dispatch, readEvents: () => Stream.empty },
+              projectSetupScriptRunner: { runForThread },
+              projectionSnapshotQuery: {
+                getThreadShellById: () =>
+                  Effect.succeed(
+                    source === "persisted selection" || source === "active session"
+                      ? Option.some(
+                          makeDefaultOrchestrationThreadShell({
+                            id: threadId,
+                            modelSelection:
+                              source === "persisted selection"
+                                ? reviewSelection
+                                : defaultModelSelection,
+                            session:
+                              source === "active session"
+                                ? {
+                                    threadId,
+                                    status: "ready",
+                                    providerName: "codex",
+                                    providerInstanceId: reviewSelection.instanceId,
+                                    runtimeMode: "full-access",
+                                    activeTurnId: null,
+                                    lastError: null,
+                                    updatedAt: createdAt,
+                                  }
+                                : null,
+                          }),
+                        )
+                      : Option.none(),
+                  ),
+              },
+            },
+          });
+          const command: ClientOrchestrationCommand = {
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-review-bootstrap"),
+            threadId,
+            message: {
+              messageId: MessageId.make("msg-review-bootstrap"),
+              role: "user",
+              text: "Review this fixture",
+              attachments: [
+                {
+                  type: "image",
+                  name: "fixture.png",
+                  mimeType: "image/png",
+                  sizeBytes: 6,
+                  dataUrl: "data:image/png;base64,cGl4ZWxz",
+                },
+              ],
+            },
+            modelSelection: source === "command" ? reviewSelection : defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Review fixture",
+                modelSelection: source === "bootstrap" ? reviewSelection : defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/review-fixture",
+                startFromOrigin: true,
+              },
+              runSetupScript: true,
+            },
+            createdAt,
+          };
+          const fileSystem = yield* FileSystem.FileSystem;
+          const attachmentsBefore = (yield* fileSystem.exists(config.attachmentsDir))
+            ? yield* fileSystem.readDirectory(config.attachmentsDir)
+            : [];
+          if (transport === "HTTP") {
+            const response = yield* fetchEffect(
+              yield* getHttpServerUrl("/api/orchestration/dispatch"),
+              {
+                method: "POST",
+                headers: {
+                  cookie: yield* getAuthenticatedSessionCookieHeader(),
+                  "content-type": "application/json",
+                },
+                body: encodeTestJson(command),
+              },
+            );
+            assert.equal(response.status, 400);
+            const failure = yield* responseJsonEffect<{
+              readonly code: string;
+              readonly reason: string;
+            }>(response);
+            assert.equal(failure.code, "invalid_request");
+            assert.equal(failure.reason, "invalid_command");
+          } else {
+            const wsUrl = yield* getWsServerUrl("/ws");
+            const result = yield* Effect.scoped(
+              withWsRpcClient(wsUrl, (client) =>
+                client[ORCHESTRATION_WS_METHODS.dispatchCommand](command).pipe(Effect.result),
+              ),
+            );
+            assertTrue(result._tag === "Failure");
+            assert.include(result.failure.message, "Review cannot prepare worktrees");
+          }
+          assert.equal(dispatch.mock.calls.length, 0);
+          assert.equal(fetchRemote.mock.calls.length, 0);
+          assert.equal(createWorktree.mock.calls.length, 0);
+          assert.equal(runForThread.mock.calls.length, 0);
+          assert.deepEqual(
+            (yield* fileSystem.exists(config.attachmentsDir))
+              ? yield* fileSystem.readDirectory(config.attachmentsDir)
+              : [],
+            attachmentsBefore,
+          );
+        }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
