@@ -23,6 +23,7 @@ import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
+import { CodexReviewLaunchConfig } from "../provider/codexReviewPolicy.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -93,6 +94,10 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  reviewLaunch: Config.schema(
+    Schema.fromJsonString(CodexReviewLaunchConfig),
+    "T3CODE_REVIEW_LAUNCH",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.Boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
@@ -472,6 +477,7 @@ export const resolveServerConfig = (
       desktopBrowserFd,
       desktopBrowserControlFd,
       resourceMonitorPath,
+      reviewLaunch: env.reviewLaunch,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

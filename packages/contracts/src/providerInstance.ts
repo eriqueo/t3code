@@ -22,6 +22,55 @@ export const isProviderDriverKind = (value: unknown): value is ProviderDriverKin
 export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
 
+export const REVIEW_PROVIDER_INSTANCE_ID = "codex_review";
+
+export const REVIEW_MODEL_ID = "gpt-6.1-sol";
+
+// Old readers keep the denial packet. A grant names the exact tested native,
+// result and termination policy; unknown versions must not authorize launch.
+const UnavailableReviewCapability = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  available: Schema.Literal(false),
+  instanceId: Schema.Literal(REVIEW_PROVIDER_INSTANCE_ID),
+  driver: Schema.Literal("codex"),
+  reason: Schema.Literal("containment_unverified"),
+});
+const AvailableReviewCapability = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
+  available: Schema.Literal(true),
+  instanceId: Schema.Literal(REVIEW_PROVIDER_INSTANCE_ID),
+  driver: Schema.Literal("codex"),
+  model: Schema.Literal(REVIEW_MODEL_ID),
+  policy: Schema.Literal("linux-private-native-read-only-v1"),
+  resultSchemaVersion: Schema.Literal(1),
+  termination: Schema.Literal("owned-pid-namespace-v1"),
+});
+export const ReviewCapability = Schema.Union([
+  UnavailableReviewCapability,
+  AvailableReviewCapability,
+]);
+export type ReviewCapability = typeof ReviewCapability.Type;
+
+export const UNAVAILABLE_REVIEW_CAPABILITY: typeof UnavailableReviewCapability.Type = Object.freeze(
+  {
+    schemaVersion: 1,
+    available: false,
+    instanceId: REVIEW_PROVIDER_INSTANCE_ID,
+    driver: "codex",
+    reason: "containment_unverified",
+  },
+);
+export const AVAILABLE_REVIEW_CAPABILITY: typeof AvailableReviewCapability.Type = Object.freeze({
+  schemaVersion: 2,
+  available: true,
+  instanceId: REVIEW_PROVIDER_INSTANCE_ID,
+  driver: "codex",
+  model: REVIEW_MODEL_ID,
+  policy: "linux-private-native-read-only-v1",
+  resultSchemaVersion: 1,
+  termination: "owned-pid-namespace-v1",
+});
+
 export const ProviderInstanceRef = Schema.Struct({
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,

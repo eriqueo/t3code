@@ -1,4 +1,5 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { isReviewInstance } from "../provider/reviewPolicy.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
@@ -366,7 +367,30 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
+      const review =
+        isReviewInstance(
+          run.providerInstanceId,
+          providerThread?.providerInstanceId,
+          projection.thread.modelSelection?.instanceId,
+        ) || projection.runs.some((prior) => isReviewInstance(prior.providerInstanceId));
+      if (
+        review &&
+        (!isReviewInstance(run.providerInstanceId) ||
+          !isReviewInstance(providerThread?.providerInstanceId) ||
+          !isReviewInstance(projection.thread.modelSelection?.instanceId) ||
+          projection.runs.some(
+            (prior) => prior.ordinal < run.ordinal && !isReviewInstance(prior.providerInstanceId),
+          ) ||
+          handoffs.length > 0 ||
+          message.text.trim().toLowerCase() === "/compact")
+      ) {
+        return yield* new ProviderTurnStartError({
+          runId,
+          cause:
+            "Review requires its own fresh conversation and cannot resume or switch provider instances.",
+        });
+      }
+      if (!review && message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Preparing a run may already point the thread at a newly selected
@@ -457,6 +481,11 @@ export const layer: Layer.Layer<
         const exists = yield* fileSystem
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
+        if (!exists && review)
+          return yield* new ProviderTurnStartError({
+            runId,
+            cause: "Review cannot recreate a missing project worktree.",
+          });
         if (!exists && (yield* isManagedWorktreePath(worktreePath))) {
           const project = yield* projects.getById(projection.thread.projectId).pipe(
             Effect.map(Option.getOrUndefined),

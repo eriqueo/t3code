@@ -1,4 +1,5 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import { isReviewInstance } from "../provider/reviewPolicy.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -99,7 +100,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "modelSelection"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -575,27 +576,29 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
-      const setup = yield* setupScripts
-        .runForThread({
-          threadId,
-          projectId: input.projectId,
-          projectCwd: project.workspaceRoot,
-          worktreePath: cwd,
-          ...(tracked
-            ? {
-                observeCompletion: {
-                  onOutputLine: (line: string) =>
-                    setupTracker.appendTail(threadId, "setup-script", line),
-                },
-              }
-            : {}),
-          project: {
-            id: project.id,
-            workspaceRoot: project.workspaceRoot,
-            scripts: project.scripts,
-          },
-        })
-        .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
+      const setup = isReviewInstance(input.modelSelection.instanceId)
+        ? { status: "no-script" as const }
+        : yield* setupScripts
+            .runForThread({
+              threadId,
+              projectId: input.projectId,
+              projectCwd: project.workspaceRoot,
+              worktreePath: cwd,
+              ...(tracked
+                ? {
+                    observeCompletion: {
+                      onOutputLine: (line: string) =>
+                        setupTracker.appendTail(threadId, "setup-script", line),
+                    },
+                  }
+                : {}),
+              project: {
+                id: project.id,
+                workspaceRoot: project.workspaceRoot,
+                scripts: project.scripts,
+              },
+            })
+            .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
 
       let awaitAsyncSetup = Effect.void;
       if (setup.status === "started") {
@@ -813,6 +816,15 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
+      if (
+        isReviewInstance(input.modelSelection.instanceId) &&
+        input.workspaceStrategy.type === "worktree"
+      ) {
+        return yield* mapError(
+          input,
+          "resolve-project",
+        )("Review cannot create or prepare a project worktree.");
+      }
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -1093,6 +1105,7 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         projectId: projection.thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
+        modelSelection: run.modelSelection,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...(message === undefined
           ? {}

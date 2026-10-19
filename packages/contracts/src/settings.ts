@@ -43,6 +43,7 @@ import {
   ProviderInstanceConfig,
   ProviderInstanceId,
   ProviderDriverKind,
+  REVIEW_PROVIDER_INSTANCE_ID,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -1242,7 +1243,11 @@ const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new S
 );
 
 const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(
-  ["codex", "claudeAgent"].map((instanceId) => ProviderInstanceId.make(instanceId)),
+  // Review is admitted only by the trusted server registry, never synthesized
+  // from these defaults. Its availability cannot require a settings-owned entry.
+  ["codex", "claudeAgent", REVIEW_PROVIDER_INSTANCE_ID].map((instanceId) =>
+    ProviderInstanceId.make(instanceId),
+  ),
 );
 
 export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>

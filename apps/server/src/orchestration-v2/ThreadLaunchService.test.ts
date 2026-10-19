@@ -305,6 +305,36 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
   });
 }
 
+it.effect("Review root launches never run project setup or create worktrees", () => {
+  const reviewId = ProviderInstanceId.make("codex_review");
+  const harness = makeHarness({ adapters: [{ ...adapter, instanceId: reviewId }] });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch({
+      ...launchInput({ command: "review-root", thread: "review-root", message: "Review fixture" }),
+      modelSelection: { instanceId: reviewId, model: "gpt-6.1-sol" },
+    });
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const released = yield* threads
+      .streamStoredEventsFrom({
+        threadId: launched.threadId,
+        afterSequence: 0,
+        eventType: "run.updated",
+      })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status !== "preparing",
+        ),
+        Stream.runHead,
+      );
+    assert.isTrue(Option.isSome(released));
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.generateBranchName.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
     (["user", "agent"] as const).map((createdBy) => ({ target, createdBy })),

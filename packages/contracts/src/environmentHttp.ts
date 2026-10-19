@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import { ReviewCapability } from "./providerInstance.ts";
 import {
   LogicalProjectRegisterInput,
   LogicalProjectListInput,
@@ -609,6 +610,14 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentInternalError,
 ] as const;
 
+class EnvironmentReviewHttpApi extends HttpApiGroup.make("review").add(
+  HttpApiEndpoint.get("reviewCapability", "/api/orchestration/review-capability", {
+    headers: OptionalBearerHeaders,
+    success: ReviewCapability,
+    error: EnvironmentOrchestrationSnapshotErrors,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -840,6 +849,7 @@ export class EnvironmentTestRunsHttpApi extends HttpApiGroup.make("testRuns")
   ) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
+  .add(EnvironmentReviewHttpApi)
   .add(EnvironmentLogicalProjectsHttpApi)
   .add(EnvironmentTestRunsHttpApi)
   .add(EnvironmentMetadataHttpApi)

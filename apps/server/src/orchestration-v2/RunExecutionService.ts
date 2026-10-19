@@ -1,4 +1,5 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { isReviewInstance } from "../provider/reviewPolicy.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -651,8 +652,12 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
+        const review = isReviewInstance(
+          input.run.providerInstanceId,
+          input.providerThread.providerInstanceId,
+        );
         const persistedStatus =
-          input.terminal.status === "completed" ? "waiting" : input.terminal.status;
+          input.terminal.status === "completed" && !review ? "waiting" : input.terminal.status;
         // Completion cohorts are advanced by Orchestrator while a provider
         // turn is in flight. Do not replay the run snapshot captured at start
         // over a newer acknowledgement, successor, or Stop barrier.
@@ -661,12 +666,12 @@ export const layer: Layer.Layer<
         const finalizedRun: OrchestrationV2Run = {
           ...runWithoutDelegatedCompletion,
           status: persistedStatus,
-          completedAt: input.terminal.status === "completed" ? null : completedAt,
+          completedAt: persistedStatus === "waiting" ? null : completedAt,
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {
           ...input.rootNode,
           status: persistedStatus,
-          completedAt: input.terminal.status === "completed" ? null : completedAt,
+          completedAt: persistedStatus === "waiting" ? null : completedAt,
           checkpointScopeId: input.checkpointScope.id,
         };
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
@@ -685,9 +690,10 @@ export const layer: Layer.Layer<
         // ahead of any later run's start on this thread's effect lane.
         const finalization = {
           effects:
-            input.terminal.status === "completed" ||
-            input.terminal.status === "interrupted" ||
-            input.terminal.status === "cancelled"
+            !review &&
+            (input.terminal.status === "completed" ||
+              input.terminal.status === "interrupted" ||
+              input.terminal.status === "cancelled")
               ? [
                   {
                     id: `effect:checkpoint.capture:${input.run.id}`,
@@ -814,15 +820,17 @@ export const layer: Layer.Layer<
         Effect.gen(function* () {
           // Startup failure and stream shutdown can report the same attempt.
           const refreshAfterTurn = yield* Effect.cached(
-            finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("failed to refresh pull requests after run termination", {
-                  threadId: input.run.threadId,
-                  runId: input.run.id,
-                  cause,
-                }),
-              ),
-            ),
+            isReviewInstance(input.run.providerInstanceId, input.providerThread.providerInstanceId)
+              ? Effect.void
+              : finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("failed to refresh pull requests after run termination", {
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      cause,
+                    }),
+                  ),
+                ),
           );
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
@@ -851,21 +859,28 @@ export const layer: Layer.Layer<
                     .responseStreamingMode,
               ),
             );
-            yield* checkpointService
-              .captureBaseline({
-                scope: input.checkpointScope,
-                ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-              })
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.failCause(cause)
-                    : Effect.logWarning(
-                        "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                        { runId: input.run.id },
-                      ),
-                ),
-              );
+            if (
+              !isReviewInstance(
+                input.run.providerInstanceId,
+                input.providerThread.providerInstanceId,
+                input.appThread.modelSelection?.instanceId,
+              )
+            )
+              yield* checkpointService
+                .captureBaseline({
+                  scope: input.checkpointScope,
+                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterruptsOnly(cause)
+                      ? Effect.failCause(cause)
+                      : Effect.logWarning(
+                          "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                          { runId: input.run.id },
+                        ),
+                  ),
+                );
             if (
               input.shouldStartProviderTurn !== undefined &&
               !(yield* input.shouldStartProviderTurn())

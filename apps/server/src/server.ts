@@ -179,6 +179,7 @@ import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as OrchestrationDispatchHttp from "./orchestration-v2/dispatchHttp.ts";
+import * as ReviewHttp from "./provider/reviewHttp.ts";
 import * as LogicalProjects from "./workspace/LogicalProjects.ts";
 import { logicalProjectsHttpApiLayer } from "./workspace/logicalProjectsHttp.ts";
 import { TestRuns } from "./workspace/TestRuns.ts";
@@ -683,6 +684,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(OrchestrationDispatchHttp.layer),
+      Layer.provide(ReviewHttp.layer),
       Layer.provide(
         logicalProjectsHttpApiLayer.pipe(
           Layer.provide(LogicalProjects.layer.pipe(Layer.provide(ProcessRunner.layer))),

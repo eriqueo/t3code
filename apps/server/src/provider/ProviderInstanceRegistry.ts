@@ -1,9 +1,10 @@
 import {
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
+  REVIEW_PROVIDER_INSTANCE_ID,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -46,7 +47,15 @@ interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
+  readonly owner: "settings" | "review";
 }
+
+const reviewEntry: ProviderInstanceConfig = {
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  displayName: "Review",
+  config: {},
+};
 
 interface RegistryState {
   readonly entries: Ref.Ref<ReadonlyMap<ProviderInstanceId, LiveEntry>>;
@@ -76,6 +85,8 @@ const buildEntry = <R>(input: {
   readonly instanceId: ProviderInstanceId;
   readonly rawInstanceId: string;
   readonly entry: ProviderInstanceConfig;
+  readonly owner: "settings" | "review";
+  readonly reviewDriver?: AnyProviderDriver<R>;
 }): Effect.Effect<
   | { readonly kind: "live"; readonly live: LiveEntry }
   | { readonly kind: "unavailable"; readonly snapshot: ServerProvider },
@@ -84,7 +95,22 @@ const buildEntry = <R>(input: {
 > =>
   Effect.gen(function* () {
     const { driversById, parentScope, instanceId, rawInstanceId, entry } = input;
-    const driver = driversById.get(entry.driver);
+    // Review's reserved identity can only enter through the startup-owned port.
+    if (
+      instanceId === REVIEW_PROVIDER_INSTANCE_ID &&
+      (input.owner !== "review" || !input.reviewDriver)
+    ) {
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: "Review",
+          reason: "Review requires its server-owned configuration; settings cannot launch it.",
+        }),
+      };
+    }
+    const driver = input.owner === "review" ? input.reviewDriver : driversById.get(entry.driver);
     if (!driver) {
       return {
         kind: "unavailable" as const,
@@ -159,6 +185,7 @@ const buildEntry = <R>(input: {
         instance: createResult.success,
         scope: childScope,
         entry,
+        owner: input.owner,
       },
     };
   });
@@ -167,13 +194,21 @@ const makeReconcile = <R>(input: {
   readonly state: RegistryState;
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
   readonly parentScope: Scope.Scope;
+  readonly reviewDriver?: AnyProviderDriver<R>;
 }): ((configMap: ProviderInstanceConfigMap) => Effect.Effect<void, never, R>) => {
   const { state, driversById, parentScope } = input;
   return (configMap: ProviderInstanceConfigMap) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
-      const nextRaw = Object.entries(configMap);
+      const syntheticReview =
+        input.reviewDriver !== undefined && !Object.hasOwn(configMap, REVIEW_PROVIDER_INSTANCE_ID);
+      const nextConfigMap: ProviderInstanceConfigMap = syntheticReview
+        ? { ...configMap, [ProviderInstanceId.make(REVIEW_PROVIDER_INSTANCE_ID)]: reviewEntry }
+        : configMap;
+      const ownerFor = (id: string) =>
+        syntheticReview && id === REVIEW_PROVIDER_INSTANCE_ID ? "review" : "settings";
+      const nextRaw = Object.entries(nextConfigMap);
       const nextKeys = new Set<ProviderInstanceId>(
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
       );
@@ -188,8 +223,11 @@ const makeReconcile = <R>(input: {
           removedIds.push(instanceId);
           continue;
         }
-        const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        const nextEntry = nextConfigMap[instanceId];
+        if (
+          nextEntry !== undefined &&
+          (live.owner !== ownerFor(instanceId) || !entryEqual(live.entry, nextEntry))
+        ) {
           replacedIds.add(instanceId);
         }
       }
@@ -222,6 +260,8 @@ const makeReconcile = <R>(input: {
           instanceId,
           rawInstanceId,
           entry,
+          owner: ownerFor(instanceId),
+          ...(input.reviewDriver ? { reviewDriver: input.reviewDriver } : {}),
         });
         if (result.kind === "live") {
           builtEntries.set(instanceId, result.live);
@@ -266,6 +306,7 @@ const makeReconcile = <R>(input: {
 export const makeProviderInstanceRegistry = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
+  readonly reviewDriver?: AnyProviderDriver<R>;
 }): Effect.Effect<
   {
     readonly registry: ProviderInstanceRegistry["Service"];
@@ -293,7 +334,12 @@ export const makeProviderInstanceRegistry = <R>(input: {
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
     const state: RegistryState = { entries, unavailable, changes };
-    const reconcileWithR = makeReconcile({ state, driversById, parentScope });
+    const reconcileWithR = makeReconcile({
+      state,
+      driversById,
+      parentScope,
+      ...(input.reviewDriver ? { reviewDriver: input.reviewDriver } : {}),
+    });
     const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
       (configMap) => reconcileWithR(configMap).pipe(Effect.provideContext(driverContext));
 
@@ -328,6 +374,7 @@ export const makeProviderInstanceRegistry = <R>(input: {
 export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
+  readonly reviewDriver?: AnyProviderDriver<R>;
 }): Layer.Layer<
   ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,
