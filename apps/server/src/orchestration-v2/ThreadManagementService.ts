@@ -71,6 +71,7 @@ export function withCreationProvenance(
   switch (command.type) {
     case "thread.create":
     case "message.dispatch":
+    case "thread.handoff.start":
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
@@ -644,13 +645,17 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "thread.handoff.start":
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
             assertProviderInstanceEnabled({
               projectId: projection.thread.projectId,
               commandId: command.commandId,
-              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+              instanceId: (command.type === "message.dispatch"
+                ? (command.modelSelection ?? projection.thread.modelSelection)
+                : projection.thread.modelSelection
+              ).instanceId,
             }),
           ),
         );

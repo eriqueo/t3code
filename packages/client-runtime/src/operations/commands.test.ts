@@ -36,9 +36,11 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  dispatchThreadHandoff,
   cancelQueuedRun,
   createProject,
   dismissThreadUserInput,
@@ -232,6 +234,25 @@ describe("V2 environment commands", () => {
         { type: "thread.archive", commandId: "queued-command", threadId: "thread-1" },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("preserves the handoff revision and command identity across the V2 transport", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const input = {
+        type: "thread.handoff.prepare" as const,
+        commandId: CommandId.make("handoff-request"),
+        threadId: ThreadId.make("handoff-source"),
+        sourceMessageId: MessageId.make("latest-user"),
+        retry: true,
+      };
+      yield* dispatchThreadHandoff(input).pipe(
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(commands).toEqual([input]);
+    }),
   );
 
   it.effect("resolves run ordinal zero to the persisted thread-start checkpoint", () =>

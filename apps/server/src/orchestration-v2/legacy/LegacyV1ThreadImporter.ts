@@ -19,6 +19,7 @@ import {
   ThreadId,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
+  ThreadHandoffActivityPayload,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -125,6 +126,11 @@ const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullReq
 const decodeLinkedPullRequest = Schema.decodeUnknownOption(ThreadLinkedPullRequest);
 const decodeStoredThread = Schema.decodeUnknownOption(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
+);
+const decodeLegacyHandoff = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ activity: Schema.Struct({ payload: ThreadHandoffActivityPayload }) }),
+  ),
 );
 
 function parseJson(json: string): unknown {
@@ -346,6 +352,31 @@ function chunks<A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const legacyHandoff = (threadId: string) =>
+    Effect.gen(function* () {
+      // V1 projections are disposable; the original event log remains the
+      // authoritative import source after migration 63 removes activities.
+      const rows = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json FROM orchestration_events
+      WHERE stream_id = ${threadId} AND application_event_version = 1
+        AND event_type = 'thread.activity-appended'
+        AND json_extract(payload_json, '$.activity.kind') LIKE 'context-handoff.%'
+      ORDER BY sequence DESC LIMIT 1
+    `;
+      const decoded =
+        rows[0] === undefined ? Option.none() : decodeLegacyHandoff(rows[0].payload_json);
+      if (Option.isNone(decoded)) return null;
+      const payload = decoded.value.activity.payload;
+      return payload.state === "requested"
+        ? {
+            ...payload,
+            state: "failed" as const,
+            code: "worker_interrupted",
+            detail:
+              "Handoff preparation was interrupted by the upgrade. Prepare a new handoff to try again.",
+          }
+        : payload;
+    });
   const eventSink = yield* EventSink.EventSinkV2;
   const transcriptImports = yield* KeyedLock.make<ThreadId>();
 
@@ -483,6 +514,7 @@ const make = Effect.gen(function* () {
          OR json_type(projection.payload_json, '$.pullRequests') IS NULL
          OR json_type(projection.payload_json, '$.branchPullRequest') IS NULL
          OR json_type(projection.payload_json, '$.activeOrderKey') IS NULL
+         OR json_type(projection.payload_json, '$.compactHandoff') IS NULL
       ORDER BY thread.created_at ASC, thread.thread_id ASC
     `;
     let repairedThreadCount = 0;
@@ -494,6 +526,10 @@ const make = Effect.gen(function* () {
       const legacyPullRequests = legacy.pullRequests ?? [];
       const repaired: OrchestrationV2AppThread = {
         ...current,
+        compactHandoff:
+          current.compactHandoff === undefined
+            ? yield* legacyHandoff(row.thread_id)
+            : current.compactHandoff,
         pinnedAt: current.pinnedAt === undefined ? legacy.pinnedAt : current.pinnedAt,
         autoSettleDisabledAt:
           current.autoSettleDisabledAt === undefined
@@ -586,7 +622,10 @@ const make = Effect.gen(function* () {
     let importedThreadCount = repairedThreadCount;
     let importedMessageCount = 0;
     for (const row of rows) {
-      const thread = importedThread(row);
+      const thread = {
+        ...importedThread(row),
+        compactHandoff: yield* legacyHandoff(row.thread_id),
+      };
       const previews = yield* listShellMessages(thread.id);
       const events: Array<OrchestrationV2DomainEvent> = [
         {

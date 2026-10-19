@@ -446,6 +446,7 @@ import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEn
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { useCompactHandoff } from "./chat/useCompactHandoff";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -5330,7 +5331,16 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const compactHandoffBanner = useCompactHandoff({
+    environmentId,
+    projection: serverProjection,
+    supported: serverConfig?.environment.capabilities.threadContextHandoffs === true,
+    snapshotCurrent: threadSyncPhase === null,
+    nowMinute,
+    usedTokens: activeContextWindow?.usedTokens ?? null,
+  });
   const composerBannerItems = (() => {
+    const compactHandoffItems = compactHandoffBanner === null ? [] : [compactHandoffBanner];
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const backgroundWorkItems = [
       childInputBannerItem,
@@ -5347,6 +5357,7 @@ export default function ChatView(props: ChatViewProps) {
         ...projectCloneItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
+        ...compactHandoffItems,
       ];
     }
     return [
@@ -5356,6 +5367,7 @@ export default function ChatView(props: ChatViewProps) {
       ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
+      ...compactHandoffItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",

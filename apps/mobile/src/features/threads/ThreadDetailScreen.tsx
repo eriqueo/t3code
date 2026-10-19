@@ -61,6 +61,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   AppState,
@@ -154,6 +155,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
+  readonly contextHandoffCard?: ReactNode;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
@@ -1218,6 +1220,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       onDismiss={() => props.onDismissFeedback(submission.id)}
                     />
                   ))}
+                  {props.contextHandoffCard}
                   {composerError !== null ? (
                     <Animated.View
                       className="shrink-0"

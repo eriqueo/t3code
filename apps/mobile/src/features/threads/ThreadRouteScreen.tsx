@@ -64,6 +64,7 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
+import { CompactHandoffCard } from "./CompactHandoffCard";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
@@ -967,6 +968,14 @@ function ThreadRouteContent(
 
       <ThreadPane>
         <ThreadDetailScreen
+          contextHandoffCard={
+            <CompactHandoffCard
+              environmentId={selectedThread.environmentId}
+              projection={selectedThreadDetail}
+              snapshotCurrent={selectedThreadDetailState.status === "live"}
+              supported={serverConfig?.environment.capabilities.threadContextHandoffs === true}
+            />
+          }
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}

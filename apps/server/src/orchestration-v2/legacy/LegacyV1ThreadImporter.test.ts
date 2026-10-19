@@ -36,6 +36,75 @@ const layerTest = Layer.mergeAll(
   layerProjectionMaintenanceProvided,
 );
 
+it.layer(layerTest)("LegacyV1HandoffImporter", (it) => {
+  it.effect.each(["ready", "requested"] as const)(
+    "imports a saved %s handoff from events after activities are dropped",
+    (state) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const threadId = ThreadId.make(`legacy-handoff-${state}`);
+        const projectId = `legacy-handoff-project-${state}`;
+        const payload = {
+          state,
+          requestId: `legacy-request-${state}`,
+          sourceMessageId: `legacy-user-${state}`,
+          ...(state === "ready"
+            ? {
+                handoff: "Preserve the exact frontier checkpoint.",
+                elapsedMs: 0,
+                inputCharacters: 0,
+                outputCharacters: 39,
+              }
+            : {}),
+        };
+        yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${projectId}, 'Handoff fixture', '/fixture/missing-checkout', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
+        yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+        VALUES (${threadId}, ${projectId}, 'Handoff source', '{"instanceId":"codex","model":"gpt-6.1-sol"}', 'full-access', 'default', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
+        yield* sql`INSERT INTO orchestration_events (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json, application_event_version)
+        VALUES (${`legacy-handoff-event-${state}`}, 'thread', ${threadId}, 1, 'thread.activity-appended', '2026-01-01T00:00:00.000Z', 'system', ${JSON.stringify({ threadId, activity: { kind: `context-handoff.${state}`, payload } })}, '{}', 1)`;
+        assert.lengthOf(
+          yield* sql`SELECT name FROM sqlite_master WHERE type='table' AND name='projection_thread_activities'`,
+          0,
+        );
+        yield* importer.reconcileShells;
+        const thread = yield* projections.getThread(threadId);
+        assert.equal(thread.compactHandoff?.requestId, payload.requestId);
+        assert.equal(thread.compactHandoff?.sourceMessageId, payload.sourceMessageId);
+        if (state === "ready") {
+          assert.equal(thread.compactHandoff?.state, "ready");
+          if (thread.compactHandoff?.state === "ready") {
+            assert.equal(thread.compactHandoff.handoff, payload.handoff);
+            assert.equal(thread.compactHandoff.inputCharacters, 0);
+          }
+        } else {
+          assert.equal(thread.compactHandoff?.state, "failed");
+          if (thread.compactHandoff?.state === "failed")
+            assert.equal(thread.compactHandoff.code, "worker_interrupted");
+        }
+        assert.deepEqual(yield* importer.reconcileShells, {
+          importedThreadCount: 0,
+          importedMessageCount: 0,
+        });
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(
+          (yield* projections.getThread(threadId)).compactHandoff,
+          thread.compactHandoff,
+        );
+        assert.equal(
+          (yield* sql<{
+            readonly payload_json: string;
+          }>`SELECT payload_json FROM orchestration_events WHERE event_id=${`legacy-handoff-event-${state}`}`)[0]
+            ?.payload_json,
+          JSON.stringify({ threadId, activity: { kind: `context-handoff.${state}`, payload } }),
+        );
+      }),
+  );
+});
+
 it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
   it.effect("uses the created-thread index for startup migration checks", () =>
     Effect.gen(function* () {

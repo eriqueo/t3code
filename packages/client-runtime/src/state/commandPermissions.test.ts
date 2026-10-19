@@ -8,6 +8,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
+  CommandId,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -59,6 +61,31 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination operate grant for a compact handoff", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const handoff = createCommandPermissions(
+          runtime,
+          ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        );
+        const input = {
+          type: "thread.handoff.prepare" as const,
+          commandId: CommandId.make("permission-handoff"),
+          threadId: ThreadId.make("permission-thread"),
+          sourceMessageId: "latest-user",
+        };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(handoff.permissionAtom(env))).toBe(false);
+        expect((yield* handoff.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(handoff.permissionAtom(env))).toBe(true);
+        yield* handoff.authorize(registry, env, input);
+      }),
+    ),
+  );
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

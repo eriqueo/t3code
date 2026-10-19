@@ -47,6 +47,8 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ContextHandoffPreparationService from "./ContextHandoffPreparationService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
@@ -313,6 +315,11 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerProviderTurnStartServiceProvided,
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
+      ContextHandoffPreparationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, ProcessRunner.layer),
+        ),
+      ),
       layerThreadManagementProvided,
     ),
   ),
