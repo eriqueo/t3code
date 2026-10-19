@@ -358,7 +358,7 @@ const make = Effect.gen(function* () {
       // authoritative import source after migration 63 removes activities.
       const rows = yield* sql<{ readonly payload_json: string }>`
       SELECT payload_json FROM orchestration_events
-      WHERE stream_id = ${threadId} AND application_event_version = 1
+      WHERE aggregate_kind = 'thread' AND stream_id = ${threadId} AND application_event_version = 1
         AND event_type = 'thread.activity-appended'
         AND json_extract(payload_json, '$.activity.kind') LIKE 'context-handoff.%'
       ORDER BY sequence DESC LIMIT 1

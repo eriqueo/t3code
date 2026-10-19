@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -232,6 +233,124 @@ it.effect("uses statev2.sqlite for default and explicit development paths", () =
     }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const proofRoot = process.env.T3CODE_MIGRATION_PROOF_ROOT;
+function hashFile(path: string): string {
+  const hash = NodeCrypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(256 * 1024);
+  const fd = NodeFS.openSync(path, "r");
+  try {
+    for (;;) {
+      const count = NodeFS.readSync(fd, buffer, 0, buffer.length, null);
+      if (count === 0) return hash.digest("hex");
+      hash.update(buffer.subarray(0, count));
+    }
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+}
+const hashRows = (rows: unknown) =>
+  NodeCrypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+
+["hwc-home", "hwc-work", "hwc-laptop"].forEach((host) => {
+  it.live.skipIf(proofRoot === undefined)(
+    `migrates the disposable ${host} snapshot and retains the V1 rollback source`,
+    () =>
+      Effect.gen(function* () {
+        if (proofRoot === undefined) return yield* Effect.die("Missing proof snapshot root");
+        const directory = NodePath.resolve(proofRoot, host);
+        const sourcePath = NodePath.join(directory, "state.sqlite");
+        const destinationPath = NodePath.join(directory, "statev2.sqlite");
+        assert.isFalse(directory.startsWith(NodePath.join(NodeOS.homedir(), ".t3")));
+        const originalHash = hashFile(sourcePath);
+        const original = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+        const threadIds = original
+          .prepare("SELECT thread_id FROM projection_threads ORDER BY thread_id")
+          .all()
+          .map((row) => ThreadId.make(String(row.thread_id)));
+        const messageCount = Number(
+          original
+            .prepare(
+              "SELECT count(*) AS n FROM projection_thread_messages WHERE role IN ('user','assistant')",
+            )
+            .get()?.n,
+        );
+        const ownership = hashRows(
+          original.prepare("SELECT * FROM logical_projects ORDER BY logical_project_id").all(),
+        );
+        const receipts = hashRows(
+          original.prepare("SELECT * FROM test_runs ORDER BY request_id").all(),
+        );
+        const history = hashRows(
+          original.prepare("SELECT * FROM effect_sql_migrations ORDER BY migration_id").all(),
+        );
+        original.close();
+        const database = SqlitePersistence.layerFromPath(destinationPath);
+        yield* initializeV2Database(destinationPath);
+        const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+          Layer.provideMerge(database),
+        );
+        const importerLayer = LegacyV1ThreadImporter.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(stores, EventSink.layer.pipe(Layer.provide(stores)))),
+        );
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          assert.equal((yield* sql`PRAGMA quick_check`)[0]?.quick_check, "ok");
+          assert.equal(
+            hashRows(yield* sql`SELECT * FROM logical_projects ORDER BY logical_project_id`),
+            ownership,
+          );
+          assert.equal(hashRows(yield* sql`SELECT * FROM test_runs ORDER BY request_id`), receipts);
+          yield* importer.reconcileShells;
+          assert.equal(
+            Number(
+              (yield* sql`SELECT count(*) AS n FROM orchestration_v2_projection_threads`)[0]?.n,
+            ),
+            threadIds.length,
+          );
+          for (const threadId of threadIds) {
+            yield* importer.ensureTranscript(threadId);
+            assert.equal((yield* projections.getThread(threadId)).id, threadId);
+          }
+          assert.equal(
+            Number(
+              (yield* sql`SELECT count(*) AS n FROM orchestration_v2_projection_messages`)[0]?.n,
+            ),
+            messageCount,
+          );
+          assert.equal(yield* importer.pendingThreadCount, 0);
+          // Closing and reopening V2 must preserve new work rather than copy V1 again.
+          yield* sql`CREATE TABLE IF NOT EXISTS parity_proof_v2_work (id TEXT PRIMARY KEY)`;
+          yield* sql`INSERT OR IGNORE INTO parity_proof_v2_work VALUES ('saved-v2-work')`;
+        }).pipe(Effect.provide(importerLayer));
+        assert.equal(hashFile(sourcePath), originalHash);
+        const rollback = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+        try {
+          assert.equal(
+            hashRows(
+              rollback.prepare("SELECT * FROM effect_sql_migrations ORDER BY migration_id").all(),
+            ),
+            history,
+          );
+          assert.equal(rollback.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
+          assert.equal(
+            Number(rollback.prepare("SELECT count(*) AS n FROM projection_threads").get()?.n),
+            threadIds.length,
+          );
+        } finally {
+          rollback.close();
+        }
+        yield* initializeV2Database(destinationPath);
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.equal((yield* sql`SELECT id FROM parity_proof_v2_work`)[0]?.id, "saved-v2-work");
+        }).pipe(Effect.provide(database));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 600_000 },
+  );
+});
 
 it.effect("starts fresh without V1 and never imports over existing V2 state", () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-fresh-"));
