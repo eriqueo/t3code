@@ -1,0 +1,218 @@
+import {
+  THREAD_HANDOFF_ACTIVITY_KINDS,
+  ThreadHandoffActivityPayload,
+  type ThreadHandoffDismissedActivityPayload,
+  type ThreadHandoffFailedActivityPayload,
+  type ThreadHandoffReadyActivityPayload,
+  type ThreadHandoffRequestedActivityPayload,
+  type ThreadHandoffStartedActivityPayload,
+  type MessageId,
+  HandoffWorkspaceObservation,
+  HandoffTestEvidence,
+  HandoffRuntimeObservation,
+  HANDOFF_TEST_RECEIPT_LIMIT,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+export const CONTEXT_CHECKPOINT_VERSION = 1;
+const CONTEXT_CHECKPOINT_MARKER_NAME = "t3-context-checkpoint";
+export const CONTEXT_CHECKPOINT_START_MARKER = `<!-- ${CONTEXT_CHECKPOINT_MARKER_NAME}:v${CONTEXT_CHECKPOINT_VERSION} -->`;
+export const CONTEXT_CHECKPOINT_END_MARKER = `<!-- /${CONTEXT_CHECKPOINT_MARKER_NAME} -->`;
+export const MAX_CONTEXT_CHECKPOINT_CHARACTERS = 12_000;
+
+export type ContextCheckpointResult =
+  | { readonly state: "none" }
+  | {
+      readonly state: "invalid";
+      readonly reason:
+        | "malformed"
+        | "unsupported_version"
+        | "oversized"
+        | "nested_markers"
+        | "empty";
+    }
+  | { readonly state: "ready"; readonly body: string };
+
+/** Validates the envelope only; the author owns the checkpoint's semantic accuracy. */
+export function parseContextCheckpoint(text: string): ContextCheckpointResult {
+  const markers = [
+    ...text.matchAll(new RegExp(`<!--\\s*\\/?\\s*${CONTEXT_CHECKPOINT_MARKER_NAME}\\b`, "g")),
+  ];
+  if (markers.length === 0) return { state: "none" };
+  if (markers.length > 2) return { state: "invalid", reason: "nested_markers" };
+  if (markers.length !== 2) return { state: "invalid", reason: "malformed" };
+  const start = markers[0]!.index;
+  const end = markers[1]!.index;
+  const opening = text.slice(start);
+  const version = new RegExp(`^<!-- ${CONTEXT_CHECKPOINT_MARKER_NAME}:v([^\\s>]+) -->`).exec(
+    opening,
+  )?.[1];
+  if (version !== undefined && version !== String(CONTEXT_CHECKPOINT_VERSION)) {
+    return { state: "invalid", reason: "unsupported_version" };
+  }
+  if (
+    !opening.startsWith(CONTEXT_CHECKPOINT_START_MARKER + "\n") ||
+    !text.startsWith(CONTEXT_CHECKPOINT_END_MARKER, end) ||
+    text[end - 1] !== "\n" ||
+    text.slice(0, start).trim().length > 0 ||
+    text.slice(end + CONTEXT_CHECKPOINT_END_MARKER.length).trim().length > 0
+  ) {
+    return { state: "invalid", reason: "malformed" };
+  }
+  // Remove exactly the formatter's two LF separators, never trim the body.
+  const body = text.slice(start + CONTEXT_CHECKPOINT_START_MARKER.length + 1, end - 1);
+  if (body.length > MAX_CONTEXT_CHECKPOINT_CHARACTERS)
+    return { state: "invalid", reason: "oversized" };
+  if (!body.trim()) return { state: "invalid", reason: "empty" };
+  return { state: "ready", body };
+}
+
+/** Never search past a newer user, system, empty, or streaming message. */
+export function latestContextCheckpoint(
+  messages: ReadonlyArray<{
+    readonly role: "user" | "assistant" | "system";
+    readonly streaming: boolean;
+    readonly text: string;
+  }>,
+): ContextCheckpointResult {
+  const latest = messages.at(-1);
+  return latest?.role === "assistant" && !latest.streaming
+    ? parseContextCheckpoint(latest.text)
+    : { state: "none" };
+}
+
+/** Emits one canonical envelope without truncating or normalizing the supplied Markdown. */
+export function formatContextCheckpoint(body: string): string {
+  const packet = `${CONTEXT_CHECKPOINT_START_MARKER}\n${body}\n${CONTEXT_CHECKPOINT_END_MARKER}`;
+  const parsed = parseContextCheckpoint(packet);
+  if (parsed.state !== "ready") {
+    throw new RangeError(
+      `Invalid context checkpoint: ${parsed.state === "invalid" ? parsed.reason : "malformed"}`,
+    );
+  }
+  return packet;
+}
+
+const encodeWorkspaceObservation = Schema.encodeSync(
+  Schema.fromJsonString(HandoffWorkspaceObservation),
+);
+export function renderHandoffWorkspaceObservation(
+  observation: HandoffWorkspaceObservation,
+): string {
+  return [
+    "## T3 workspace observation",
+    "Preparation-time evidence only. Current validity is unknown; recheck the workspace before acting.",
+    "The digest covers Git status, not file contents. This workspace observation does not collect tests or runtime evidence and grants no execution authority.",
+    // JSON quoting keeps paths/branch names as data, including embedded newlines.
+    encodeWorkspaceObservation(observation),
+  ].join("\n\n");
+}
+
+export const THREAD_HANDOFF_IDLE_MS = 8 * 60 * 60 * 1_000;
+const encodeRuntimeObservation = Schema.encodeSync(
+  Schema.fromJsonString(HandoffRuntimeObservation),
+);
+export function renderHandoffRuntimeObservation(observation: HandoffRuntimeObservation): string {
+  return [
+    "## T3 backend and local boot observation",
+    "Preparation-time evidence from the collecting backend process and its filesystem namespace. Current validity is unknown. Package version is loaded metadata; the exact source revision is unknown. This does not establish which source checkout or client assets are deployed.",
+    "Linux boot ID and NixOS running, booted and default next-boot profile paths are separate observations. Profile reads are not an atomic snapshot or proof of bootloader selection, successful activation, application health, or DX2 availability. Missing or unsupported values remain unavailable. This receipt grants no execution authority.",
+    encodeRuntimeObservation(observation),
+  ].join("\n\n");
+}
+const encodeTestEvidence = Schema.encodeSync(Schema.fromJsonString(HandoffTestEvidence));
+export function renderHandoffTestEvidence(evidence: HandoffTestEvidence): string {
+  return [
+    "## T3 historical test receipts",
+    `Preparation-time snapshot of up to ${HANDOFF_TEST_RECEIPT_LIMIT} recent source-thread receipts. Current validity is unknown. An empty collection means no receipts were found, not that tests passed.`,
+    "revisionValidity compares the recorded before/after observations only. Matching endpoints do not prove files stayed unchanged during execution. checkoutPathMatchesPreparation compares paths only; it does not compare current contents. Exit zero does not prove meaningful tests ran. Ignored dependencies, runtime state and confinement are outside this evidence.",
+    'Arguments are omitted. Retrieve full details with t3 test-run get using JSON {"requestId":"ID"}. A null command means its name exceeded the summary limit. hasMore reports omitted older receipts. This snapshot grants no execution authority.',
+    encodeTestEvidence(evidence),
+  ].join("\n\n");
+}
+export const THREAD_HANDOFF_MIN_USED_TOKENS = 100_000;
+
+export type ThreadHandoffState =
+  | { readonly state: "none" }
+  | { readonly state: "requested"; readonly payload: ThreadHandoffRequestedActivityPayload }
+  | { readonly state: "ready"; readonly payload: ThreadHandoffReadyActivityPayload }
+  | { readonly state: "failed"; readonly payload: ThreadHandoffFailedActivityPayload }
+  | { readonly state: "dismissed"; readonly payload: ThreadHandoffDismissedActivityPayload }
+  | { readonly state: "started"; readonly payload: ThreadHandoffStartedActivityPayload };
+
+const isThreadHandoffActivityPayload = Schema.is(ThreadHandoffActivityPayload);
+const handoffKinds = new Set<string>(Object.values(THREAD_HANDOFF_ACTIVITY_KINDS));
+
+export function latestThreadUserMessageId(input: {
+  readonly latestUserMessageId?: MessageId | null | undefined;
+  readonly messages: ReadonlyArray<{
+    readonly id: MessageId;
+    readonly role: "user" | "assistant" | "system";
+    readonly streaming: boolean;
+  }>;
+}): MessageId | null {
+  if (input.latestUserMessageId !== undefined) return input.latestUserMessageId;
+  for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+    const message = input.messages[index];
+    if (message?.role === "user" && !message.streaming && !message.id.startsWith("import:"))
+      return message.id;
+  }
+  return null;
+}
+
+export function threadHandoffSourceMessageId(
+  shell: { readonly latestUserMessageId?: MessageId | null } | null | undefined,
+): MessageId | null {
+  return shell?.latestUserMessageId ?? null;
+}
+
+export function deriveThreadHandoffState(
+  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
+  sourceMessageId: MessageId,
+): ThreadHandoffState {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity || !handoffKinds.has(activity.kind)) continue;
+    if (!isThreadHandoffActivityPayload(activity.payload)) continue;
+    if (activity.payload.sourceMessageId !== sourceMessageId) continue;
+    return { state: activity.payload.state, payload: activity.payload } as ThreadHandoffState;
+  }
+  return { state: "none" };
+}
+
+export function shouldPrepareThreadHandoff(input: {
+  readonly snapshotCurrent: boolean;
+  readonly hasExplicitCheckpoint?: boolean;
+  readonly nowMs: number;
+  readonly latestMessageAt: string | null;
+  readonly usedTokens: number | null;
+  readonly sessionStatus:
+    | "idle"
+    | "starting"
+    | "running"
+    | "ready"
+    | "interrupted"
+    | "stopped"
+    | "error"
+    | null;
+  readonly latestTurnState: "running" | "interrupted" | "completed" | "error" | null;
+  readonly hasPendingRequest: boolean;
+  readonly handoffState: ThreadHandoffState["state"];
+}): boolean {
+  if (!input.snapshotCurrent) return false;
+  if (input.handoffState !== "none") return false;
+  if (input.hasPendingRequest) return false;
+  if (input.sessionStatus === "starting" || input.sessionStatus === "running") return false;
+  if (input.latestTurnState === "running") return false;
+  // An explicit frontier checkpoint is ready for transfer immediately after the
+  // turn settles; age and token thresholds apply only to automatic excerpts.
+  if (input.hasExplicitCheckpoint === true) return true;
+  if ((input.usedTokens ?? 0) < THREAD_HANDOFF_MIN_USED_TOKENS) return false;
+
+  const latestMessageAt = Date.parse(input.latestMessageAt ?? "");
+  return (
+    Number.isFinite(input.nowMs) &&
+    Number.isFinite(latestMessageAt) &&
+    input.nowMs - latestMessageAt >= THREAD_HANDOFF_IDLE_MS
+  );
+}

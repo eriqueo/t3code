@@ -1,4 +1,20 @@
 import * as Context from "effect/Context";
+import {
+  LogicalProjectRegisterInput,
+  LogicalProjectListInput,
+  LogicalProjectResolveInput,
+  LogicalProjectRegistration,
+  LogicalProjectPage,
+  LogicalProjectResolution,
+  LogicalProjectError,
+} from "./logicalProjects.ts";
+import {
+  TestRunInput,
+  TestRunLookup,
+  TestRunRelease,
+  TestRunReceipt,
+  TestRunError,
+} from "./testRuns.ts";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -771,7 +787,61 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+export class EnvironmentLogicalProjectsHttpApi extends HttpApiGroup.make("logicalProjects")
+  .add(
+    HttpApiEndpoint.post("register", "/api/logical-projects/register", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectRegisterInput,
+      success: LogicalProjectRegistration,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("list", "/api/logical-projects/list", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectListInput,
+      success: LogicalProjectPage,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("resolve", "/api/logical-projects/resolve", {
+      headers: OptionalBearerHeaders,
+      payload: LogicalProjectResolveInput,
+      success: LogicalProjectResolution,
+      error: [LogicalProjectError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+export class EnvironmentTestRunsHttpApi extends HttpApiGroup.make("testRuns")
+  .add(
+    HttpApiEndpoint.post("run", "/api/test-runs/run", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunInput,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("get", "/api/test-runs/get", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunLookup,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("release", "/api/test-runs/release", {
+      headers: OptionalBearerHeaders,
+      payload: TestRunRelease,
+      success: TestRunReceipt,
+      error: [TestRunError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
+  .add(EnvironmentLogicalProjectsHttpApi)
+  .add(EnvironmentTestRunsHttpApi)
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentMcpOAuthHttpApi)

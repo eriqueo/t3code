@@ -193,7 +193,7 @@ it.effect.each([
     [55, "FutureMigration"],
   ],
   [[53, "LogicalProjects"]],
-])("refuses mixed fork history without publishing or changing V1: %j", (history) => {
+] as const)("refuses mixed fork history without publishing or changing V1: %j", (history) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-fork-history-"));
   const sourcePath = NodePath.join(directory, "state.sqlite");
   const destinationPath = NodePath.join(directory, "statev2.sqlite");

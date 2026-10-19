@@ -179,6 +179,10 @@ import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as OrchestrationDispatchHttp from "./orchestration-v2/dispatchHttp.ts";
+import * as LogicalProjects from "./workspace/LogicalProjects.ts";
+import { logicalProjectsHttpApiLayer } from "./workspace/logicalProjectsHttp.ts";
+import { TestRuns } from "./workspace/TestRuns.ts";
+import { testRunsHttpApiLayer } from "./workspace/testRunsHttp.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -679,6 +683,16 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(OrchestrationDispatchHttp.layer),
+      Layer.provide(
+        logicalProjectsHttpApiLayer.pipe(
+          Layer.provide(LogicalProjects.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        ),
+      ),
+      Layer.provide(
+        testRunsHttpApiLayer.pipe(
+          Layer.provide(TestRuns.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        ),
+      ),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
