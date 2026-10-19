@@ -83,6 +83,7 @@ describe("buildThreadActionMenuItems", () => {
     const denied = buildThreadActionMenuItems({ ...baseState, canOperate: false, branch: "main" });
     expect(denied.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
       "new-thread-on-branch",
+      "section",
       "mark-unread",
       "copy",
       "project-settings",
@@ -103,10 +104,29 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "rename",
+      "section",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {
+    const sections = buildThreadActionMenuItems({
+      ...baseState,
+      sectionNames: ["datax", "hwc"],
+      currentSection: "hwc",
+    }).find((item) => item.id === "section");
+    expect(sections?.children?.map((item) => [item.id, item.disabled ?? false])).toEqual([
+      ["section:set:datax", false],
+      ["section:set:hwc", true],
+      ["section:new", false],
+      ["section:clear", false],
+    ]);
     const items = buildThreadActionMenuItems(baseState);
     const copyIndex = items.findIndex((item) => item.id === "copy");
     expect(items[copyIndex + 1]).toMatchObject({

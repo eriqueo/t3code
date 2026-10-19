@@ -1,11 +1,13 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
+  isSidebarUserSectionMarker,
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
   type SidebarListItem,
   type SidebarListMarker,
+  type SidebarUserSectionMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
 
@@ -103,6 +105,7 @@ export function createSidebarSortingStrategy(input: {
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
+  userSectionByThreadKey?: ReadonlyMap<string, SidebarUserSectionMarker>;
 }): SortingStrategy {
   if (input.enabled === false) return () => stationary;
   const { items } = input;
@@ -178,6 +181,26 @@ export function createSidebarSortingStrategy(input: {
     projected.push(...groups.pinned);
     marker("pinned-divider");
     section("active");
+    const sectionMarkers = items.flatMap((item) =>
+      item.kind === "marker" && isSidebarUserSectionMarker(item.marker) ? [item.marker] : [],
+    );
+    if (sectionMarkers.length > 0) {
+      const activeRows = projected.splice(projected.length - groups.active.length);
+      const emitted = new Set<SidebarUserSectionMarker>();
+      for (const row of activeRows) {
+        const rowSection =
+          row.kind === "thread" && row.key !== active.key
+            ? input.userSectionByThreadKey?.get(row.key)
+            : undefined;
+        if (rowSection !== undefined && !emitted.has(rowSection)) {
+          marker(rowSection);
+          emitted.add(rowSection);
+        }
+        projected.push(row);
+      }
+      for (const sectionMarker of sectionMarkers)
+        if (!emitted.has(sectionMarker)) marker(sectionMarker);
+    }
     if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
       marker("working-header");
       projected.push(...groups.working);

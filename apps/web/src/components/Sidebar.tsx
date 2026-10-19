@@ -148,6 +148,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
+import { handleThreadSectionMenuAction, listThreadSectionNames } from "../threadSections";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -229,6 +230,10 @@ import {
   useSidebarRowSubscriptionLease,
   type SidebarListItem,
   type SidebarListMarker,
+  type SidebarUserSectionMarker,
+  groupSidebarThreadsBySection,
+  isSidebarUserSectionMarker,
+  sidebarUserSectionMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -365,6 +370,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const COLLAPSED_USER_SECTIONS_KEY = "t3code:sidebar:collapsed-project-sections";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -452,6 +458,12 @@ function useSidebarThreads(input: {
     input;
   const threads = useThreadShells();
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const threadSections = useClientSettings((s) => s.sidebarThreadSections);
+  const [collapsedUserSections, setCollapsedUserSections] = useLocalStorage(
+    COLLAPSED_USER_SECTIONS_KEY,
+    [],
+    Schema.Array(Schema.String),
+  );
   const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute.
@@ -500,6 +512,26 @@ function useSidebarThreads(input: {
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
+  const activeSectionGroups = groupSidebarThreadsBySection(
+    activeThreads,
+    (thread) => threadSections[threadShellKey(thread)] ?? null,
+  );
+  const visibleActiveSections = activeSectionGroups.sections.map((section) => ({
+    name: section.name,
+    total: section.threads.length,
+    collapsed: collapsedUserSections.includes(section.name),
+    threads: collapsedUserSections.includes(section.name)
+      ? routeThreadOnly(section.threads, routeThreadKey)
+      : section.threads,
+  }));
+  const visibleActiveThreads = [
+    ...activeSectionGroups.unsectioned,
+    ...visibleActiveSections.flatMap((section) => section.threads),
+  ];
+  const userSectionByThreadKey = new Map<string, SidebarUserSectionMarker>();
+  for (const section of visibleActiveSections)
+    for (const thread of section.threads)
+      userSectionByThreadKey.set(threadShellKey(thread), sidebarUserSectionMarker(section.name));
   const visibleSettledThreads = (() => {
     if (settledThreads.length <= settledVisibleCount) return settledThreads;
     const visible = settledThreads.slice(0, settledVisibleCount);
@@ -522,7 +554,7 @@ function useSidebarThreads(input: {
     : routeThreadOnly(workingThreads, routeThreadKey);
   const orderedThreads = [
     ...pinnedThreads,
-    ...activeThreads,
+    ...visibleActiveThreads,
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
@@ -539,6 +571,15 @@ function useSidebarThreads(input: {
   }
   return {
     ...partition,
+    threadSections,
+    activeSectionGroups,
+    visibleActiveSections,
+    visibleActiveThreads,
+    userSectionByThreadKey,
+    toggleUserSection: (name: string) =>
+      setCollapsedUserSections((current) =>
+        current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name],
+      ),
     threads,
     workingShelfEnabled,
     searchableThreads: [
@@ -570,7 +611,7 @@ function useSidebarThreads(input: {
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
-    activeKeys: activeThreads.map(threadShellKey),
+    activeKeys: visibleActiveThreads.map(threadShellKey),
     pinnedKeysById: new Map(
       threads.map((thread) => [threadShellKey(thread), thread.pinOrderKey ?? null] as const),
     ),
@@ -1256,7 +1297,7 @@ function SidebarDragBoundary(props: {
 }
 
 function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: "working-header" | "snoozed-header" | "settled-header" | SidebarUserSectionMarker;
   label: string;
   className?: string;
   dragging?: boolean;
@@ -1282,7 +1323,11 @@ function SidebarSectionHeader(props: {
         tone={
           props.isDropTarget ? "accent" : props.dragging ? "emphasized" : snoozed ? "info" : "muted"
         }
-        data-testid={`sidebar-${shelf}-shelf-toggle`}
+        data-testid={
+          isSidebarUserSectionMarker(props.marker)
+            ? "sidebar-project-section-toggle"
+            : `sidebar-${shelf}-shelf-toggle`
+        }
       >
         {props.label}
       </CollapsibleSectionHeader>
@@ -2969,6 +3014,11 @@ export default function Sidebar() {
     draggableThreadKeys,
     activeReorderableThreadKeys,
     activeThreads,
+    threadSections,
+    activeSectionGroups,
+    visibleActiveSections,
+    userSectionByThreadKey,
+    toggleUserSection,
     workingThreads,
     snoozedThreads,
     settledThreads,
@@ -3543,9 +3593,12 @@ export default function Sidebar() {
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
-    items.push(...activeRows);
+    items.push(...rowsOf(activeSectionGroups.unsectioned, "active"));
+    for (const section of visibleActiveSections) {
+      items.push({ kind: "marker", marker: sidebarUserSectionMarker(section.name) });
+      items.push(...rowsOf(section.threads, "active"));
+    }
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
@@ -3634,6 +3687,7 @@ export default function Sidebar() {
     settledVisibleCount,
     routeThreadKey,
     snoozedThreadCount: snoozedThreads.length,
+    userSectionByThreadKey,
   });
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
@@ -4241,11 +4295,14 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              sectionNames: listThreadSectionNames(threadSections),
+              currentSection: threadSections[threadKey] ?? null,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (handleThreadSectionMenuAction(threadRef, clicked.value)) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
@@ -4967,6 +5024,31 @@ export default function Sidebar() {
                               />,
                             );
                             break;
+                          default: {
+                            if (!isSidebarUserSectionMarker(item.marker)) break;
+                            const section = visibleActiveSections.find(
+                              (candidate) =>
+                                sidebarUserSectionMarker(candidate.name) === item.marker,
+                            );
+                            if (!section) break;
+                            items.push(
+                              <SidebarSectionHeader
+                                key={item.marker}
+                                marker={item.marker}
+                                label={
+                                  section.collapsed
+                                    ? `${section.name} (${section.total})`
+                                    : section.name
+                                }
+                                dragging={from !== null}
+                                toggle={{
+                                  expanded: !section.collapsed,
+                                  onToggle: () => toggleUserSection(section.name),
+                                }}
+                              />,
+                            );
+                            break;
+                          }
                           case "snoozed-header":
                             items.push(
                               <SidebarSectionHeader

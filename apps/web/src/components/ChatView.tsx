@@ -447,6 +447,7 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { useCompactHandoff } from "./chat/useCompactHandoff";
+import { useThreadSectionPickerStore } from "../threadSections";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -5502,6 +5503,13 @@ export default function ChatView(props: ChatViewProps) {
       focusComposerStable();
     },
     commands: {
+      "chat.scrollToEnd": () => {
+        scrollToEndStable(true);
+        focusComposerStable();
+      },
+      "thread.moveToSection": () => {
+        if (activeThreadRef) useThreadSectionPickerStore.getState().open(activeThreadRef);
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
       },

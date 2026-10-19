@@ -10,6 +10,7 @@ import {
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
+  sidebarUserSectionMarker,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -632,6 +633,36 @@ describe("sidebar drag projection", () => {
     );
     expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-83);
     expect(result.get(sidebarMarkerId("settled-placeholder"))).toEqual({ ...stationary, y: -83 });
+  });
+
+  it("keeps project section headings in place while a row leaves the active section", () => {
+    const hwc = sidebarUserSectionMarker("hwc");
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      marker(hwc),
+      thread("h1", "active"),
+      thread("h2", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const result = preview(
+      {
+        items,
+        settledOrder: [],
+        settledExpanded: false,
+        userSectionByThreadKey: new Map([
+          ["h1", hwc],
+          ["h2", hwc],
+        ]),
+      },
+      "h2",
+      sidebarMarkerId("settled-placeholder"),
+    );
+    expect(result.get(sidebarMarkerId(hwc))).toEqual(stationary);
+    expect(result.get("h1")).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-83);
   });
 
   it("preserves a collapsed snoozed header while another section changes", () => {

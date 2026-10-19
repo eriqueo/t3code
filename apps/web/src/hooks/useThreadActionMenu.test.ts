@@ -114,12 +114,18 @@ vi.mock("./useHandleNewThread", () => ({
   useNewThreadHandler: () => async () => recordEffect("draft"),
 }));
 vi.mock("./useSettings", () => ({
+  getClientSettings: () => ({ sidebarThreadSections: {} }),
   useClientSettings: (select: (settings: unknown) => unknown) =>
     select({
       confirmThreadDelete: true,
       confirmThreadArchive: true,
       timestampFormat: "12-hour",
     }),
+}));
+vi.mock("../threadSections", () => ({
+  handleThreadSectionMenuAction: () => false,
+  listThreadSectionNames: () => [],
+  readThreadSection: () => null,
 }));
 vi.mock("./useThreadActions", () => ({
   useThreadActions: () =>

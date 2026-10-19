@@ -1,6 +1,38 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+export type ThreadSectionMenuId =
+  | "section"
+  | `section:set:${string}`
+  | "section:new"
+  | "section:clear";
+function buildThreadSectionMenuItem(input: {
+  readonly sectionNames: readonly string[];
+  readonly currentSection: string | null;
+}): ContextMenuItem<ThreadSectionMenuId> {
+  return {
+    id: "section",
+    label: "Move to section",
+    icon: "folder",
+    children: [
+      ...input.sectionNames.map((name) => ({
+        id: `section:set:${name}` as const,
+        label: name === input.currentSection ? `${name} (current)` : name,
+        disabled: name === input.currentSection,
+      })),
+      {
+        id: "section:new",
+        label: "New section…",
+        icon: "plus",
+        separatorBefore: input.sectionNames.length > 0,
+      },
+      ...(input.currentSection === null
+        ? []
+        : [{ id: "section:clear" as const, label: "Remove from section", icon: "x" }]),
+    ],
+  };
+}
+
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -23,7 +55,8 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | ThreadSectionMenuId;
 
 export type DraftActionMenuId =
   | "copy"
@@ -86,10 +119,13 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  readonly sectionNames?: readonly string[];
+  readonly currentSection?: string | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  if (action === "section" || action.startsWith("section:")) return false;
   return ![
     "new-thread-on-branch",
     "project-settings",
@@ -158,6 +194,10 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    buildThreadSectionMenuItem({
+      sectionNames: state.sectionNames ?? [],
+      currentSection: state.currentSection ?? null,
+    }),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
     ...(state.projectFilter
       ? [

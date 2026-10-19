@@ -14,6 +14,7 @@ import {
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
+  groupSidebarThreadsBySection,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
@@ -76,6 +77,17 @@ import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
 describe("resolveSidebarRowAccessibility", () => {
+  it("keeps unsectioned rows first and sections alphabetical without changing each row order", () => {
+    const sectionOf = (key: string) =>
+      ({ n1: "hwc", n2: "hwc", d1: "datax", p1: "personal" })[key] ?? null;
+    const grouped = groupSidebarThreadsBySection(["n1", "x1", "d1", "n2", "p1", "x2"], sectionOf);
+    expect(grouped.unsectioned).toEqual(["x1", "x2"]);
+    expect(grouped.sections).toEqual([
+      { name: "datax", threads: ["d1"] },
+      { name: "hwc", threads: ["n1", "n2"] },
+      { name: "personal", threads: ["p1"] },
+    ]);
+  });
   it.each([
     {
       title: "Can you audit the UI?",

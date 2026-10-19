@@ -139,7 +139,49 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  | SidebarUserSectionMarker;
+
+export type SidebarUserSectionMarker = `user-section:${string}`;
+export function sidebarUserSectionMarker(section: string): SidebarUserSectionMarker {
+  return `user-section:${section}`;
+}
+export function isSidebarUserSectionMarker(
+  marker: SidebarListMarker,
+): marker is SidebarUserSectionMarker {
+  return marker.startsWith("user-section:");
+}
+export function compareSidebarUserSections(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
+/** Preserve each section's incoming order, with unsectioned rows first. */
+export function groupSidebarThreadsBySection<T>(
+  threads: readonly T[],
+  sectionOf: (thread: T) => string | null,
+): {
+  readonly unsectioned: readonly T[];
+  readonly sections: ReadonlyArray<{ readonly name: string; readonly threads: readonly T[] }>;
+} {
+  const unsectioned: T[] = [];
+  const bySection = new Map<string, T[]>();
+  for (const thread of threads) {
+    const section = sectionOf(thread);
+    if (section === null) {
+      unsectioned.push(thread);
+      continue;
+    }
+    const members = bySection.get(section);
+    if (members) members.push(thread);
+    else bySection.set(section, [thread]);
+  }
+  return {
+    unsectioned,
+    sections: [...bySection.keys()]
+      .toSorted(compareSidebarUserSections)
+      .map((name) => ({ name, threads: bySection.get(name)! })),
+  };
+}
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;

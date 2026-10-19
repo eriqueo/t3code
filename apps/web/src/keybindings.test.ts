@@ -191,6 +191,22 @@ const DEFAULT_BINDINGS = compile([
 ]);
 
 describe("effectiveShortcutsForCommand", () => {
+  it("keeps Ctrl+End and the custom section shortcut separate from the upstream effort control", () => {
+    const resolve = (input: ReturnType<typeof event>) =>
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      });
+    assert.strictEqual(resolve(event({ key: "End", ctrlKey: true })), "chat.scrollToEnd");
+    assert.strictEqual(
+      resolve(event({ key: "e", ctrlKey: true, shiftKey: true })),
+      "thread.moveToSection",
+    );
+    assert.strictEqual(
+      resolve(event({ key: "e", ctrlKey: true, altKey: true })),
+      "composer.effort",
+    );
+  });
   it("passes only effective preview shortcuts to the desktop bridge", () => {
     const reopen = modShortcut("t", { shiftKey: true });
     const second = modShortcut("y", { shiftKey: true });
@@ -1485,7 +1501,8 @@ describe("composer and pull request shortcuts", () => {
       (key, command) => {
         const input = event({
           key,
-          shiftKey: true,
+          shiftKey: command !== "composer.effort",
+          altKey: command === "composer.effort",
           metaKey: platform === "MacIntel",
           ctrlKey: platform !== "MacIntel",
         });

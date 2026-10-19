@@ -150,6 +150,14 @@ describe("storage cleanup settings", () => {
 });
 
 describe("ClientSettings rich text composer", () => {
+  it("preserves saved per-environment thread sections while decoding and writing preferences", () => {
+    const saved = {
+      sidebarThreadSections: { '["home","thread-one"]': "hwc", '["work","thread-one"]': "datax" },
+    };
+    expect(encodeClientSettings(decodeClientSettings(saved))).toMatchObject(saved);
+    expect(decodeClientSettingsPatch(saved)).toEqual(saved);
+    expect(decodeClientSettings({}).sidebarThreadSections).toEqual({});
+  });
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
     expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(true);

@@ -45,6 +45,11 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 ## Pin and reorder threads
 
+On web and desktop, choose **Move to section** from a thread's menu or press
+`mod+shift+e`. Choose an existing name or create one. Active threads group under
+collapsible section headings. The open thread stays visible in a collapsed section.
+Sections are saved on this client and stay assigned while an environment is unavailable.
+
 Pin a thread from its menu to keep it above your active work.
 
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
