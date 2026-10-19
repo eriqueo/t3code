@@ -21,16 +21,32 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
-it.effect(
-  "snapshots V1, imports transcripts lazily, and preserves both databases across switches",
-  () => {
+it.effect.each([false, true])(
+  "snapshots V1, imports transcripts lazily, and preserves both databases across switches (fork: %s)",
+  (fork) => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v1-v2-"));
     const sourcePath = NodePath.join(directory, "state.sqlite");
     const destinationPath = NodePath.join(directory, "statev2.sqlite");
     const threadId = ThreadId.make("legacy-thread");
     const seed = Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 52 });
+      yield* runMigrations({ toMigrationInclusive: fork ? 51 : 52 });
+      if (fork) {
+        yield* sql`ALTER TABLE projection_threads ADD COLUMN latest_user_message_id TEXT`;
+        yield* sql`CREATE TABLE logical_projects (
+          logical_project_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+          title TEXT NOT NULL, version INTEGER NOT NULL CHECK(version = 1)
+        )`;
+        yield* sql`INSERT INTO logical_projects VALUES ('logical', 'project', 'Keep ownership', 1)`;
+        yield* sql`CREATE TABLE test_runs (
+          request_id TEXT PRIMARY KEY, input_json TEXT NOT NULL, cwd TEXT NOT NULL,
+          active INTEGER NOT NULL CHECK(active IN (0,1)), receipt_json TEXT NOT NULL
+        )`;
+        yield* sql`INSERT INTO test_runs VALUES ('reserved-key', '{}', '/tmp/project', 1, '{}')`;
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES
+          (52, 'ProjectionThreadLatestUserMessageId'),
+          (53, 'LogicalProjects'), (54, 'TestRuns')`;
+      }
       yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
       VALUES ('project', 'Project', '/tmp/project', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
       yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
@@ -57,6 +73,19 @@ it.effect(
       );
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
+        // The upstream schema must run despite the fork's colliding ids.
+        yield* sql`SELECT title_state_json, auto_settle_disabled_at FROM projection_threads`;
+        yield* sql`SELECT * FROM pull_request_files_viewed`;
+        if (fork) {
+          assert.equal(
+            (yield* sql`SELECT title FROM logical_projects`)[0]?.title,
+            "Keep ownership",
+          );
+          assert.equal(
+            (yield* sql`SELECT request_id FROM test_runs WHERE active = 1`)[0]?.request_id,
+            "reserved-key",
+          );
+        }
         const legacy = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
         yield* legacy.reconcileShells;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -87,7 +116,7 @@ it.effect(
       try {
         assert.equal(
           v1.prepare("SELECT MAX(migration_id) AS id FROM effect_sql_migrations").get()?.id,
-          52,
+          fork ? 54 : 52,
         );
         assert.equal(
           v1
@@ -148,6 +177,42 @@ it.effect("includes committed WAL data and does not publish a failed snapshot", 
     } finally {
       source.close();
     }
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
+  );
+});
+
+it.effect.each([
+  [
+    [52, "ProjectionThreadLatestUserMessageId"],
+    [53, "UnknownMigration"],
+  ],
+  [
+    [52, "ProjectionThreadLatestUserMessageId"],
+    [55, "FutureMigration"],
+  ],
+  [[53, "LogicalProjects"]],
+])("refuses mixed fork history without publishing or changing V1: %j", (history) => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-fork-history-"));
+  const sourcePath = NodePath.join(directory, "state.sqlite");
+  const destinationPath = NodePath.join(directory, "statev2.sqlite");
+  return Effect.gen(function* () {
+    const source = new NodeSqlite.DatabaseSync(sourcePath);
+    try {
+      source.exec(
+        "CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, name TEXT)",
+      );
+      const insert = source.prepare("INSERT INTO effect_sql_migrations VALUES (?, ?)");
+      for (const [id, name] of history) insert.run(id, name);
+    } finally {
+      source.close();
+    }
+    const original = NodeFS.readFileSync(sourcePath);
+    const result = yield* Effect.result(initializeV2Database(destinationPath));
+    assert.equal(result._tag, "Failure");
+    assert.isFalse(NodeFS.existsSync(destinationPath));
+    assert.deepEqual(NodeFS.readFileSync(sourcePath), original);
   }).pipe(
     Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
