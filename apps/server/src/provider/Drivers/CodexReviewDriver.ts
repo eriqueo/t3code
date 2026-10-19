@@ -62,8 +62,56 @@ export const makeCodexReviewDriver = (
         });
       }
       const factory = yield* makeReviewClientFactory(launch);
+      const capabilities = {
+        ...CodexProviderCapabilitiesV2,
+        sessions: {
+          ...CodexProviderCapabilitiesV2.sessions,
+          supportsMultipleProviderThreadsPerSession: false,
+          supportsModelSwitchInSession: false,
+          supportsRuntimeModeSwitchInSession: false,
+          supportsProviderSwitchingViaHandoff: false,
+        },
+        threads: {
+          ...CodexProviderCapabilitiesV2.threads,
+          canRollbackThread: false,
+          canForkThread: false,
+          canForkFromTurn: false,
+          canForkFromSubagentThread: false,
+        },
+        turns: {
+          ...CodexProviderCapabilitiesV2.turns,
+          supportsActiveSteering: false,
+          supportsSteeringByInterruptRestart: false,
+        },
+        tools: {
+          ...CodexProviderCapabilitiesV2.tools,
+          supportsMcpTools: false,
+          supportsDynamicToolCallbacks: false,
+        },
+        approvals: {
+          ...CodexProviderCapabilitiesV2.approvals,
+          supportsCommandApproval: false,
+          supportsFileReadApproval: false,
+          supportsFileChangeApproval: false,
+          supportsApplyPatchApproval: false,
+        },
+        subagents: {
+          ...CodexProviderCapabilitiesV2.subagents,
+          supportsSubagents: false,
+          canWaitForSubagents: false,
+          canCloseSubagents: false,
+          canForkSubagentThread: false,
+        },
+        checkpointing: {
+          ...CodexProviderCapabilitiesV2.checkpointing,
+          appCanCheckpointFilesystem: false,
+          supportsNestedCheckpointScopes: false,
+          providerCanRollbackConversation: false,
+        },
+      };
       const ordinaryAdapter = yield* makeCodexAdapterV2({
         instanceId,
+        capabilities,
         settings: decodeCodexSettings({
           enabled: true,
           binaryPath: "controlled-review",
@@ -136,57 +184,7 @@ export const makeCodexReviewDriver = (
           streamChanges: Stream.empty,
           applyUsageLimits: () => Effect.void,
         },
-        orchestrationAdapter: {
-          ...ordinaryAdapter,
-          getCapabilities: () =>
-            Effect.succeed({
-              ...CodexProviderCapabilitiesV2,
-              sessions: {
-                ...CodexProviderCapabilitiesV2.sessions,
-                supportsMultipleProviderThreadsPerSession: false,
-                supportsModelSwitchInSession: false,
-                supportsRuntimeModeSwitchInSession: false,
-                supportsProviderSwitchingViaHandoff: false,
-              },
-              threads: {
-                ...CodexProviderCapabilitiesV2.threads,
-                canRollbackThread: false,
-                canForkThread: false,
-                canForkFromTurn: false,
-                canForkFromSubagentThread: false,
-              },
-              turns: {
-                ...CodexProviderCapabilitiesV2.turns,
-                supportsActiveSteering: false,
-                supportsSteeringByInterruptRestart: false,
-              },
-              tools: {
-                ...CodexProviderCapabilitiesV2.tools,
-                supportsMcpTools: false,
-                supportsDynamicToolCallbacks: false,
-              },
-              approvals: {
-                ...CodexProviderCapabilitiesV2.approvals,
-                supportsCommandApproval: false,
-                supportsFileReadApproval: false,
-                supportsFileChangeApproval: false,
-                supportsApplyPatchApproval: false,
-              },
-              subagents: {
-                ...CodexProviderCapabilitiesV2.subagents,
-                supportsSubagents: false,
-                canWaitForSubagents: false,
-                canCloseSubagents: false,
-                canForkSubagentThread: false,
-              },
-              checkpointing: {
-                ...CodexProviderCapabilitiesV2.checkpointing,
-                appCanCheckpointFilesystem: false,
-                supportsNestedCheckpointScopes: false,
-                providerCanRollbackConversation: false,
-              },
-            }),
-        },
+        orchestrationAdapter: ordinaryAdapter,
         textGeneration: {
           generateReviewGuide: () => noGeneration("generateReviewGuide"),
           generateCommitMessage: () => noGeneration("generateCommitMessage"),

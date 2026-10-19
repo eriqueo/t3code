@@ -15,6 +15,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2TurnItem,
@@ -1756,6 +1757,7 @@ describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    capabilities?: OrchestrationV2ProviderCapabilities,
   ) =>
     Effect.gen(function* () {
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1765,6 +1767,7 @@ describe("CodexAdapterV2 session initialize", () => {
       let initializeRequests = 0;
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        ...(capabilities === undefined ? {} : { capabilities }),
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory: {
@@ -1805,6 +1808,8 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        session: runtime.providerSession,
+        getCapabilities: adapter.getCapabilities,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1814,6 +1819,30 @@ describe("CodexAdapterV2 session initialize", () => {
         initializeRequests: () => initializeRequests,
       };
     });
+
+  it.effect("preserves driver capabilities in the opened native session", () =>
+    Effect.gen(function* () {
+      const capabilities = {
+        ...CodexAdapterV2.CodexProviderCapabilitiesV2,
+        sessions: {
+          ...CodexAdapterV2.CodexProviderCapabilitiesV2.sessions,
+          supportsMultipleProviderThreadsPerSession: false,
+        },
+      };
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({ scenario: "dedicated-review-capabilities", entries: [] }),
+        undefined,
+        capabilities,
+      );
+      assert.deepEqual(yield* session.getCapabilities(), capabilities);
+      assert.deepEqual(session.session.capabilities, capabilities);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
