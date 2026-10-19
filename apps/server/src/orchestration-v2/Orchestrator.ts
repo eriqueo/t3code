@@ -10661,7 +10661,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
       ) && !projection.runtimeRequests.some((request) => request.status === "pending");
     const now = yield* DateTime.now;
-    const update = (compactHandoff: NonNullable<OrchestrationV2AppThread["compactHandoff"]>) =>
+    const update = (
+      compactHandoff: NonNullable<OrchestrationV2AppThread["compactHandoff"]>,
+      archivedAt = thread.archivedAt,
+    ) =>
       emit(
         events,
         command,
@@ -10670,7 +10673,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: thread.id,
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
-        payload: { ...thread, compactHandoff, updatedAt: now },
+        payload: { ...thread, compactHandoff, archivedAt, updatedAt: now },
       });
     if (command.type === "thread.handoff.complete") {
       // Late results never replace a newer decision or conversation revision.
@@ -10767,34 +10770,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (current.runtimeObservation
         ? "\n\n" + renderHandoffRuntimeObservation(current.runtimeObservation)
         : "");
-    yield* update({
-      state: "started",
-      requestId: current.requestId,
-      sourceMessageId: current.sourceMessageId,
-      targetThreadId: command.targetThreadId,
-    });
+    yield* dispatchThreadMutation(
+      { type: "thread.archive", commandId: command.commandId, threadId: thread.id },
+      events,
+      effects,
+    );
+    yield* update(
+      {
+        state: "started",
+        requestId: current.requestId,
+        sourceMessageId: current.sourceMessageId,
+        targetThreadId: command.targetThreadId,
+      },
+      now,
+    );
     // All source/target events, command receipt and provider effects commit in
     // the existing event-sink transaction. There is no setup-script launch path.
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.archived",
-      threadId: thread.id,
-      providerInstanceId: thread.providerInstanceId,
-      occurredAt: now,
-      payload: {
-        ...thread,
-        compactHandoff: {
-          state: "started",
-          requestId: current.requestId,
-          sourceMessageId: current.sourceMessageId,
-          targetThreadId: command.targetThreadId,
-        },
-        archivedAt: now,
-        updatedAt: now,
-      },
-    });
     yield* dispatchThreadCreate(
       {
         type: "thread.create",

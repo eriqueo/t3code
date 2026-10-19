@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import { formatContextCheckpoint } from "@t3tools/shared/contextHandoff";
@@ -187,6 +188,31 @@ it.effect("retains the exact checkpoint and atomically starts one fresh thread o
     assert.isDefined(ready.testEvidence);
     assert.isDefined(ready.runtimeObservation);
     const targetThreadId = ThreadId.make("compact-successor");
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const idleSessionId = ProviderSessionId.make("compact-idle-source-session");
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("compact-idle-session-event"),
+          type: "provider-session.attached",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: idleSessionId,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: modelSelection.instanceId,
+            status: "ready",
+            cwd: "/fixture/missing-checkout",
+            model: modelSelection.model,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+        },
+      ],
+    });
     const start = {
       type: "thread.handoff.start" as const,
       commandId: CommandId.make("compact-start"),
@@ -203,6 +229,13 @@ it.effect("retains the exact checkpoint and atomically starts one fresh thread o
     const target = yield* threads.getThreadProjection(targetThreadId);
     assert.isNotNull(source.thread.archivedAt);
     assert.equal(source.thread.compactHandoff?.state, "started");
+    assert.isTrue(
+      (yield* outbox.listByCommandId(start.commandId)).some(
+        (effect) =>
+          effect.request.type === "provider-session.detach" &&
+          effect.request.providerSessionId === idleSessionId,
+      ),
+    );
     assert.equal(target.thread.worktreePath, source.thread.worktreePath);
     assert.deepEqual(target.thread.modelSelection, source.thread.modelSelection);
     assert.lengthOf(target.messages, 1);
