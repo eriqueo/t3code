@@ -63,6 +63,11 @@ const clientSettings: ClientSettings = {
     "environment-1:/tmp/project-a": "separate",
   },
   sidebarProjectSortOrder: "manual",
+  sidebarThreadSections: {
+    "environment-1:thread-1": "1_datax",
+    "environment-1:thread-2": "2_hwc",
+    "environment-2:thread-1": "3_personal",
+  },
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
@@ -131,6 +136,8 @@ describe("DesktopClientSettings", () => {
         yield* settings.set(clientSettings);
 
         assert.deepEqual(yield* settings.get, Option.some(clientSettings));
+        const reopened = yield* DesktopClientSettings.make;
+        assert.deepEqual(yield* reopened.get, Option.some(clientSettings));
         assert.deepEqual(
           yield* decodeClientSettingsJson(
             yield* fileSystem.readFileString(environment.clientSettingsPath),

@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ThreadId,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -27,6 +29,7 @@ import {
   resolveEnvironmentIdentificationMode,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { readThreadSection, setThreadSection } from "../threadSections";
 
 beforeEach(() => {
   persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
@@ -36,6 +39,75 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("thread section persistence across sessions", () => {
+  it("shows a section move only after storage confirms the save", async () => {
+    const thread = { environmentId: EnvironmentId.make("local"), threadId: ThreadId.make("chat") };
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarThreadSections: { "local:chat": "1_datax" },
+    });
+    let finishSave!: () => void;
+    let started!: () => void;
+    const saving = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    persistenceMocks.setClientSettings.mockImplementationOnce(() => {
+      started();
+      return new Promise<void>((resolve) => {
+        finishSave = resolve;
+      });
+    });
+
+    setThreadSection(thread, "2_hwc");
+    await saving;
+    expect(readThreadSection(thread)).toBe("1_datax");
+    finishSave();
+    await persistClientSettingsUpdate((settings) => settings);
+    expect(readThreadSection(thread)).toBe("2_hwc");
+  });
+
+  it.each([false, true])(
+    "preserves sections across reopen with settings already loaded: %s",
+    async (hydrated) => {
+      const environmentId = EnvironmentId.make("environment-local");
+      const savedThread = { environmentId, threadId: ThreadId.make("saved-thread") };
+      const newThread = { environmentId, threadId: ThreadId.make("new-thread") };
+      const remoteThread = {
+        environmentId: EnvironmentId.make("environment-remote"),
+        threadId: newThread.threadId,
+      };
+      let saved: ClientSettings = {
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarThreadSections: { "environment-local:saved-thread": "1_datax" },
+      };
+      persistenceMocks.getClientSettings.mockImplementation(async () => saved);
+      persistenceMocks.setClientSettings.mockImplementation(async (settings) => {
+        saved = settings;
+      });
+      if (hydrated) await ensureClientSettingsHydrated();
+
+      setThreadSection(newThread, "2_hwc");
+      setThreadSection(remoteThread, "3_personal");
+      // Drain settings work through its public queue, then start a fresh client session.
+      await persistClientSettingsUpdate((settings) => settings);
+      __resetClientSettingsPersistenceForTests();
+      await ensureClientSettingsHydrated();
+
+      expect(readThreadSection(savedThread)).toBe("1_datax");
+      expect(readThreadSection(newThread)).toBe("2_hwc");
+      expect(readThreadSection(remoteThread)).toBe("3_personal");
+
+      setThreadSection(newThread, null);
+      await persistClientSettingsUpdate((settings) => settings);
+      __resetClientSettingsPersistenceForTests();
+      await ensureClientSettingsHydrated();
+      expect(readThreadSection(newThread)).toBeNull();
+      expect(readThreadSection(savedThread)).toBe("1_datax");
+      expect(readThreadSection(remoteThread)).toBe("3_personal");
+    },
+  );
 });
 
 describe("client settings hydration", () => {

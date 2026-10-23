@@ -3,7 +3,8 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { compareSidebarUserSections } from "./components/Sidebar.logic";
-import { getClientSettings, persistClientSettingsPatch } from "./hooks/useSettings";
+import { getClientSettings, persistClientSettingsUpdate } from "./hooks/useSettings";
+import { toastManager } from "./components/ui/toast";
 
 /**
  * User-named sidebar sections are a client setting keyed by scoped thread key.
@@ -23,13 +24,21 @@ export function readThreadSection(threadRef: ScopedThreadRef): string | null {
 /** Assigns a thread to a section, or clears it with null or a blank name. */
 export function setThreadSection(threadRef: ScopedThreadRef, section: string | null): void {
   const key = scopedThreadKey(threadRef);
-  const current = getClientSettings().sidebarThreadSections;
   const name = section?.trim() ?? "";
-  if ((current[key] ?? "") === name) return;
-  const next = { ...current };
-  if (name.length > 0) next[key] = name;
-  else delete next[key];
-  void persistClientSettingsPatch({ sidebarThreadSections: next });
+  // Derive the edit after hydration and earlier queued writes, so startup
+  // defaults cannot replace saved assignments or another pending move.
+  void persistClientSettingsUpdate((settings) => {
+    const next = { ...settings.sidebarThreadSections };
+    if (name.length > 0) next[key] = name;
+    else delete next[key];
+    return { ...settings, sidebarThreadSections: next };
+  }).catch(() => {
+    toastManager.add({
+      type: "error",
+      title: "Section not saved",
+      description: "Could not save the section assignment. Try moving the thread again.",
+    });
+  });
 }
 
 /** Applies a "Move to section" menu choice. Returns false for ids it does not own. */
