@@ -33,6 +33,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
+    urlHandlerLauncher: Option.none(),
     path,
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
@@ -158,6 +159,50 @@ const emptyRecording = (): RecordedRegistration => ({
 });
 
 describe("DesktopLinuxUrlHandler", () => {
+  it("keeps the unpackaged Electron application entry ahead of incoming URLs", () => {
+    const command = DesktopLinuxUrlHandler.resolveUrlHandlerLaunchCommand({
+      execPath: "/nix/store/electron/bin/electron",
+      defaultApp: true,
+      applicationEntry: "/home/al ice/t3/apps/desktop/dist-electron/main.cjs",
+    });
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      ...command,
+      displayName: "T3 Code",
+      scheme: "t3code",
+    });
+    assert.include(
+      entry,
+      'Exec="/nix/store/electron/bin/electron" "/home/al ice/t3/apps/desktop/dist-electron/main.cjs" %U',
+    );
+    assert.throws(
+      () =>
+        DesktopLinuxUrlHandler.resolveUrlHandlerLaunchCommand({
+          execPath: "/nix/store/electron/bin/electron",
+          defaultApp: true,
+        }),
+      "absolute application entry",
+    );
+  });
+
+  it.effect(
+    "uses the trusted launcher binding in runtime registration as well as pre-ready",
+    () => {
+      const recorded = emptyRecording();
+      return Effect.gen(function* () {
+        yield* runRegister(recorded, {
+          environment: {
+            urlHandlerLauncher: Option.some("/home/al ice/.nix-profile/bin/t3code"),
+          },
+        });
+        assert.include(
+          recorded.files[0]?.content,
+          'Exec="/home/al ice/.nix-profile/bin/t3code" %U',
+        );
+        assert.notInclude(recorded.files[0]?.content, "T3-Code.AppImage");
+      });
+    },
+  );
+
   it("renders a scheme-handler desktop entry with freedesktop Exec quoting", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
       displayName: "T3 Code (Nightly)",

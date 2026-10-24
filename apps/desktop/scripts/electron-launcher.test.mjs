@@ -1,4 +1,5 @@
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -16,6 +17,36 @@ import {
 } from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
+  it("forwards an incoming conversation URI through the actual start entrypoint", () => {
+    const entry = new URL("./start-electron.mjs", import.meta.url).href;
+    const uri = "t3code://threads/environment-id/conversation-id";
+    const bootstrap = `
+      import cp from 'node:child_process';
+      import {registerHooks, syncBuiltinESMExports} from 'node:module';
+      cp.execFileSync = () => '';
+      cp.spawn = (file, args) => {
+        console.log(JSON.stringify({file, args}));
+        return {on: () => {}};
+      };
+      syncBuiltinESMExports();
+      registerHooks({load(url, context, next) {
+        if (url.endsWith('/electron-launcher.mjs')) return {
+          format: 'module', shortCircuit: true,
+          source: "export const desktopDir='/synthetic'; export const resolveElectronLaunchCommand=args=>({electronPath:'/synthetic/electron',args});"
+        };
+        return next(url, context);
+      }});
+      process.argv = [process.execPath, ${JSON.stringify(entry)}, ${JSON.stringify(uri)}];
+      await import(${JSON.stringify(entry)});
+    `;
+    const output = NodeChildProcess.execFileSync(
+      process.execPath,
+      ["--input-type=module", "--eval", bootstrap],
+      { encoding: "utf8", timeout: 10000 },
+    );
+    assert.deepEqual(JSON.parse(output).args, ["dist-electron/main.cjs", uri]);
+  });
+
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
       VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",

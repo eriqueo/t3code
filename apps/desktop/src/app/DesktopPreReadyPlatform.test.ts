@@ -58,6 +58,23 @@ vi.mock("node:child_process", () => ({
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 describe("DesktopPreReadyPlatform", () => {
+  it.effect("preserves the configured Linux application launcher for URL activation", () => {
+    vi.stubEnv("T3CODE_DESKTOP_LAUNCHER", "/nix/store/example/bin/t3code");
+    getSwitchValueMock.mockReturnValue("");
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          assert.include(
+            writeFileSyncMock.mock.calls[0]?.[1],
+            'Exec="/nix/store/example/bin/t3code" %U',
+          );
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
   beforeEach(() => {
     appendSwitchMock.mockReset();
     getSwitchValueMock.mockReset();
