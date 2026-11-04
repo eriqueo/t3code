@@ -1,6 +1,8 @@
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { assert, describe, it } from "vite-plus/test";
 
@@ -15,7 +17,118 @@ import {
   writeDevelopmentLauncherScript,
 } from "./electron-launcher.mjs";
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script tests select the host executable format.
+const hostPlatform = NodeOS.platform();
+
+function withRuntimeFixture(run) {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runtime-port-"));
+  const scripts = NodePath.join(directory, "scripts");
+  const supplied = NodePath.join(directory, "provided");
+  const packageRoot = NodePath.join(directory, "node_modules", "electron");
+  const bin = NodePath.join(directory, "bin");
+  for (const path of [scripts, supplied, packageRoot, bin]) {
+    NodeFS.mkdirSync(path, { recursive: true });
+  }
+  for (const name of ["electron-launcher.mjs", "ensure-electron-runtime.mjs"]) {
+    NodeFS.copyFileSync(new URL(name, import.meta.url), NodePath.join(scripts, name));
+  }
+  const binary = NodePath.join(supplied, "electron");
+  NodeFS.writeFileSync(binary, "#!/bin/sh\nexit 0\n", { mode: 0o555 });
+  NodeFS.chmodSync(supplied, 0o555);
+  NodeFS.writeFileSync(
+    NodePath.join(packageRoot, "package.json"),
+    JSON.stringify({
+      name: "electron",
+      version: "44.3.0",
+      main: "index.js",
+    }),
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(packageRoot, "index.js"),
+    `module.exports = ${JSON.stringify(binary)};\n`,
+  );
+  const repair = NodePath.join(directory, "repair-attempted");
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "curl"),
+    '#!/bin/sh\nprintf repair > "$PROBE_REPAIR_MARKER"\nexit 73\n',
+    { mode: 0o755 },
+  );
+  const execute = (module, expression) =>
+    NodeChildProcess.spawnSync(
+      process.execPath,
+      expression === undefined
+        ? [NodePath.join(scripts, module)]
+        : [
+            "--input-type=module",
+            "--eval",
+            `import * as subject from ${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(scripts, module)).href)}; ${expression}`,
+          ],
+      {
+        env: {
+          ...process.env,
+          PATH: bin,
+          ELECTRON_OVERRIDE_DIST_PATH: supplied,
+          PROBE_REPAIR_MARKER: repair,
+        },
+        encoding: "utf8",
+        timeout: 10000,
+      },
+    );
+  try {
+    run({ directory, packageRoot, binary, supplied, repair, execute });
+  } finally {
+    NodeFS.chmodSync(supplied, 0o755);
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 describe("electron development launcher", () => {
+  it.skipIf(hostPlatform !== "linux")(
+    "leaves Chromium sandbox selection enabled when the setuid helper is absent",
+    () => {
+      withRuntimeFixture(({ packageRoot, binary, execute }) => {
+        NodeFS.mkdirSync(NodePath.join(packageRoot, "dist"));
+        NodeFS.copyFileSync(binary, NodePath.join(packageRoot, "dist", "electron"));
+        const result = execute(
+          "electron-launcher.mjs",
+          'process.stdout.write(JSON.stringify(subject.resolveElectronLaunchCommand(["dist-electron/main.cjs"])));',
+        );
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout), {
+          electronPath: binary,
+          args: ["dist-electron/main.cjs"],
+        });
+      });
+    },
+  );
+
+  it.skipIf(hostPlatform !== "linux")(
+    "uses the supplied immutable runtime without repairing or fetching the npm runtime",
+    () => {
+      withRuntimeFixture(({ binary, supplied, repair, execute }) => {
+        const result = execute("ensure-electron-runtime.mjs");
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), binary);
+        assert.isFalse(NodeFS.existsSync(repair));
+        assert.equal(NodeFS.statSync(binary).mode & 0o777, 0o555);
+        assert.equal(NodeFS.statSync(supplied).mode & 0o777, 0o555);
+      });
+    },
+  );
+
+  it.skipIf(hostPlatform !== "linux")(
+    "refuses an invalid supplied runtime without falling back to a download",
+    () => {
+      withRuntimeFixture(({ binary, supplied, repair, execute }) => {
+        NodeFS.chmodSync(supplied, 0o755);
+        NodeFS.unlinkSync(binary);
+        NodeFS.chmodSync(supplied, 0o555);
+        const result = execute("ensure-electron-runtime.mjs");
+        assert.notEqual(result.status, 0);
+        assert.isFalse(NodeFS.existsSync(repair));
+      });
+    },
+  );
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
       VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",

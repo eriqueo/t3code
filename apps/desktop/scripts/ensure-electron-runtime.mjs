@@ -142,7 +142,24 @@ function installElectronRuntime(electronDir, version) {
   }
 }
 
-export function ensureElectronRuntime() {
+export function ensureElectronRuntime({ overrideDistPath } = {}) {
+  if (overrideDistPath) {
+    const electronPath = NodePath.join(overrideDistPath, getPlatformPath());
+    try {
+      if (!NodeFS.statSync(electronPath).isFile()) throw new Error("Not a regular file");
+      NodeFS.accessSync(electronPath, NodeFS.constants.X_OK);
+    } catch (cause) {
+      throw Object.assign(
+        new Error(
+          `Electron runtime is not executable at ${electronPath}. Set ELECTRON_OVERRIDE_DIST_PATH to an installed Electron runtime.`,
+          { cause },
+        ),
+        { code: "ELECTRON_RUNTIME_OVERRIDE_INVALID" },
+      );
+    }
+    // A supplied runtime can be immutable. Never repair it or fetch another one.
+    return electronPath;
+  }
   const electronPackageJsonPath = require.resolve("electron/package.json");
   const electronPackageJson = JSON.parse(NodeFS.readFileSync(electronPackageJsonPath, "utf8"));
   const electronDir = NodePath.dirname(electronPackageJsonPath);
@@ -179,6 +196,8 @@ export function ensureElectronRuntime() {
 
 // `file://${argv[1]}` never matches on Windows (drive letters need `file:///C:/`).
 if (process.argv[1] && NodeURL.pathToFileURL(process.argv[1]).href === import.meta.url) {
-  const electronPath = ensureElectronRuntime();
+  const electronPath = ensureElectronRuntime({
+    overrideDistPath: process.env.ELECTRON_OVERRIDE_DIST_PATH,
+  });
   process.stdout.write(`${electronPath}\n`);
 }

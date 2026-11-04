@@ -414,31 +414,6 @@ function buildMacLauncher(electronBinaryPath) {
   return launcherBinaryPath;
 }
 
-function isLinuxSetuidSandboxConfigured(electronBinaryPath) {
-  if (hostPlatform !== "linux") {
-    return true;
-  }
-
-  const sandboxPath = NodePath.join(NodePath.dirname(electronBinaryPath), "chrome-sandbox");
-  try {
-    const sandboxStat = NodeFS.statSync(sandboxPath);
-    return sandboxStat.uid === 0 && (sandboxStat.mode & 0o4777) === 0o4755;
-  } catch {
-    return false;
-  }
-}
-
-function resolveLinuxSandboxArgs(electronBinaryPath) {
-  if (isLinuxSetuidSandboxConfigured(electronBinaryPath)) {
-    return [];
-  }
-
-  console.warn(
-    "[desktop-launcher] Electron chrome-sandbox is not root-owned with mode 4755; launching local Electron with --no-sandbox.",
-  );
-  return ["--no-sandbox"];
-}
-
 function resolveElectronPath() {
   const electronBinaryPath = resolveElectronBinaryPath();
 
@@ -453,7 +428,8 @@ export function resolveElectronLaunchCommand(args = []) {
   const electronPath = resolveElectronPath();
   return {
     electronPath,
-    args: [...resolveLinuxSandboxArgs(electronPath), ...args],
+    // Chromium can use user namespaces without a setuid helper.
+    args: [...args],
   };
 }
 
@@ -461,8 +437,9 @@ export function resolveElectronBinaryPath({
   ensureRuntime = ensureElectronRuntime,
   createRequire = NodeModule.createRequire,
   moduleUrl = import.meta.url,
+  runtimeEnvironment = process.env,
 } = {}) {
-  ensureRuntime();
+  ensureRuntime({ overrideDistPath: runtimeEnvironment.ELECTRON_OVERRIDE_DIST_PATH });
 
   const require = createRequire(moduleUrl);
   return require("electron");
