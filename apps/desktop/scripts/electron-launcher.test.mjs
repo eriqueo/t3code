@@ -20,6 +20,86 @@ import {
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script tests select the host executable format.
 const hostPlatform = NodeOS.platform();
 
+async function verifyDesktopChildStop(signal) {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-child-stop-"));
+  const scripts = NodePath.join(directory, "scripts");
+  NodeFS.mkdirSync(scripts);
+  const marker = NodePath.join(directory, "graceful-child-stop");
+  const childPath = NodePath.join(directory, "child.mjs");
+  NodeFS.writeFileSync(
+    childPath,
+    `import fs from 'node:fs';
+    for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>{fs.writeFileSync(${JSON.stringify(marker)},signal);process.exit(0)});
+    process.stdout.write(JSON.stringify({pid:process.pid})+'\\n');setInterval(()=>{},1000);
+  `,
+  );
+  NodeFS.copyFileSync(
+    new URL("start-electron.mjs", import.meta.url),
+    NodePath.join(scripts, "start-electron.mjs"),
+  );
+  NodeFS.writeFileSync(NodePath.join(scripts, "build-browser-secret.mjs"), "");
+  NodeFS.writeFileSync(
+    NodePath.join(scripts, "electron-launcher.mjs"),
+    `export const desktopDir=${JSON.stringify(directory)};export function resolveElectronLaunchCommand(){return {electronPath:${JSON.stringify(process.execPath)},args:[${JSON.stringify(childPath)}]}}`,
+  );
+  const wrapper = NodeChildProcess.spawn(
+    process.execPath,
+    [NodePath.join(scripts, "start-electron.mjs")],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let childPid;
+  let pipeClosed = false;
+  const failures = [];
+  wrapper.stdout.on("close", () => {
+    pipeClosed = true;
+  });
+  const exited = new Promise((resolve) =>
+    wrapper.once("exit", (code, signal) => resolve({ code, signal })),
+  );
+  try {
+    childPid = await new Promise((resolve, reject) => {
+      const deadline = setTimeout(
+        () => reject(new Error("Fixture child did not become ready")),
+        5000,
+      );
+      let text = "";
+      wrapper.stdout.on("data", (value) => {
+        text += value;
+        if (text.includes("\n")) {
+          clearTimeout(deadline);
+          resolve(JSON.parse(text).pid);
+        }
+      });
+    });
+    wrapper.kill(signal);
+    let deadline;
+    const result = await Promise.race([
+      exited,
+      new Promise((_, reject) => {
+        deadline = setTimeout(() => reject(new Error("Desktop wrapper did not stop")), 5000);
+      }),
+    ]).finally(() => clearTimeout(deadline));
+    assert.isTrue(result.code === 0 || result.signal === signal);
+    assert.isTrue(NodeFS.existsSync(marker), "wrapper left its captured Electron child running");
+    assert.equal(NodeFS.readFileSync(marker, "utf8"), signal);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    if (wrapper.exitCode === null && wrapper.signalCode === null) wrapper.kill("SIGKILL");
+    // The private child's open output pipe confirms this PID still owns the fixture.
+    if (childPid && !pipeClosed) {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") failures.push(error);
+      }
+    }
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "Desktop child fixture failed");
+}
+
 function withRuntimeFixture(run) {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runtime-port-"));
   const scripts = NodePath.join(directory, "scripts");
@@ -83,6 +163,12 @@ function withRuntimeFixture(run) {
 }
 
 describe("electron development launcher", () => {
+  it.skipIf(hostPlatform !== "linux")(
+    "forwards desktop stop signals to the child before exiting",
+    async () => {
+      for (const signal of ["SIGINT", "SIGTERM"]) await verifyDesktopChildStop(signal);
+    },
+  );
   it.skipIf(hostPlatform !== "linux")(
     "leaves Chromium sandbox selection enabled when the setuid helper is absent",
     () => {
