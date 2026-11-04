@@ -20,11 +20,12 @@ import {
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone script tests select the host executable format.
 const hostPlatform = NodeOS.platform();
 
-async function verifyDesktopChildStop(signal) {
+async function verifyDesktopChildStop(signal, forwardedArgs = []) {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-child-stop-"));
   const scripts = NodePath.join(directory, "scripts");
   NodeFS.mkdirSync(scripts);
   const marker = NodePath.join(directory, "graceful-child-stop");
+  const argumentsPath = NodePath.join(directory, "child-arguments.json");
   const childPath = NodePath.join(directory, "child.mjs");
   NodeFS.writeFileSync(
     childPath,
@@ -40,11 +41,11 @@ async function verifyDesktopChildStop(signal) {
   NodeFS.writeFileSync(NodePath.join(scripts, "build-browser-secret.mjs"), "");
   NodeFS.writeFileSync(
     NodePath.join(scripts, "electron-launcher.mjs"),
-    `export const desktopDir=${JSON.stringify(directory)};export function resolveElectronLaunchCommand(){return {electronPath:${JSON.stringify(process.execPath)},args:[${JSON.stringify(childPath)}]}}`,
+    `import fs from 'node:fs';export const desktopDir=${JSON.stringify(directory)};export function resolveElectronLaunchCommand(args){fs.writeFileSync(${JSON.stringify(argumentsPath)},JSON.stringify(args));return {electronPath:${JSON.stringify(process.execPath)},args:[${JSON.stringify(childPath)}]}}`,
   );
   const wrapper = NodeChildProcess.spawn(
     process.execPath,
-    [NodePath.join(scripts, "start-electron.mjs")],
+    [NodePath.join(scripts, "start-electron.mjs"), ...forwardedArgs],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let childPid;
@@ -71,6 +72,10 @@ async function verifyDesktopChildStop(signal) {
         }
       });
     });
+    assert.deepEqual(JSON.parse(NodeFS.readFileSync(argumentsPath, "utf8")), [
+      "dist-electron/main.cjs",
+      ...forwardedArgs,
+    ]);
     wrapper.kill(signal);
     let deadline;
     const result = await Promise.race([
@@ -163,6 +168,12 @@ function withRuntimeFixture(run) {
 }
 
 describe("electron development launcher", () => {
+  it.skipIf(hostPlatform !== "linux")(
+    "passes incoming desktop URI arguments to Electron",
+    async () => {
+      await verifyDesktopChildStop("SIGTERM", ["t3code://thread/security-fixture"]);
+    },
+  );
   it.skipIf(hostPlatform !== "linux")(
     "forwards desktop stop signals to the child before exiting",
     async () => {
