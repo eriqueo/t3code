@@ -11,6 +11,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
@@ -115,6 +117,33 @@ const migratePrivateCommand = Command.make("migrate-private", {
     migratePrivateState(options).pipe(
       Effect.flatMap((result) => Console.log(JSON.stringify(result))),
     ),
+  ),
+);
+
+const holdOwnershipCommand = Command.make("hold-ownership", {
+  stateDir: Flag.String("state-dir"),
+}).pipe(
+  Command.withDescription("Hold an existing state directory's ownership lock until stdin closes."),
+  Command.withHandler(({ stateDir }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const resolved = yield* fs.realPath(stateDir);
+      if (resolved !== path.resolve(stateDir)) {
+        return yield* new PrivateMigrationError({
+          message: "Refusing a symlinked state directory.",
+        });
+      }
+      const lockPath = path.join(resolved, "server-owner.sqlite");
+      if ((yield* fs.exists(lockPath)) && (yield* fs.realPath(lockPath)) !== lockPath) {
+        return yield* new PrivateMigrationError({
+          message: "Refusing a symlinked ownership file.",
+        });
+      }
+      yield* ServerOwnership.holdServerOwnershipLock(path.join(resolved, "server-runtime.json"));
+      yield* Console.log(JSON.stringify({ version: 1, ownership: "held" }));
+      yield* (yield* Stdio.Stdio).stdin.pipe(Stream.runDrain);
+    }).pipe(Effect.scoped),
   ),
 );
 
@@ -296,5 +325,5 @@ export const doctorCommand = Command.make("doctor", {
       );
     }),
   ),
-  Command.withSubcommands([migratePrivateCommand]),
+  Command.withSubcommands([migratePrivateCommand, holdOwnershipCommand]),
 );

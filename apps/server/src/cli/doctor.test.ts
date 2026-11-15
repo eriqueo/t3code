@@ -10,7 +10,10 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as BootService from "../cloud/bootService.ts";
-import { runDoctor, migratePrivateState } from "./doctor.ts";
+import { runDoctor, migratePrivateState, doctorCommand } from "./doctor.ts";
+import { Command } from "effect/cli";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -31,6 +34,39 @@ const layerHost = Layer.mergeAll(
   ),
   Layer.succeed(HostProcess.Environment, {}),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+it.effect("holds real ownership until controller stdin ends, then releases it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped();
+    const statePath = path.join(root, "server-runtime.json");
+    let observed = false;
+    yield* Command.runWith(doctorCommand, { version: "test" })([
+      "hold-ownership",
+      "--state-dir",
+      root,
+    ]).pipe(
+      Effect.provide(
+        Layer.mock(Stdio.Stdio)({
+          stdin: Stream.fromEffect(
+            Effect.gen(function* () {
+              const error = yield* Effect.scoped(holdServerOwnershipLock(statePath)).pipe(
+                Effect.flip,
+              );
+              assert.equal(error._tag, "ServerAlreadyRunningError");
+              observed = true;
+              return new Uint8Array();
+            }),
+          ),
+        }),
+      ),
+    );
+    assert.isTrue(observed);
+    yield* Effect.scoped(holdServerOwnershipLock(statePath));
+    assert.isFalse(yield* fs.exists(path.join(root, "statev2.sqlite")));
+  }).pipe(Effect.provide(layerHost)),
+);
 
 it.effect("migrates only private existing state and refuses a held ownership lock", () =>
   Effect.gen(function* () {
