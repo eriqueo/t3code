@@ -141,7 +141,7 @@ const holdOwnershipCommand = Command.make("hold-ownership", {
         });
       }
       yield* ServerOwnership.holdServerOwnershipLock(path.join(resolved, "server-runtime.json"));
-      yield* Console.log(JSON.stringify({ version: 1, ownership: "held" }));
+      yield* Console.log('{"version":1,"ownership":"held"}');
       yield* (yield* Stdio.Stdio).stdin.pipe(Stream.runDrain);
     }).pipe(Effect.scoped),
   ),

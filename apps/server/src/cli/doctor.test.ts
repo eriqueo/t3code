@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,7 @@ import { makePersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 // An empty home, so no boot service unit installed on this machine is read.
 const layerHost = Layer.mergeAll(
+  NetService.layer,
   ProcessRunner.layer,
   Layer.effect(
     HostProcess.HomeDirectory,
@@ -41,26 +43,27 @@ it.effect("holds real ownership until controller stdin ends, then releases it", 
     const path = yield* Path.Path;
     const root = yield* fs.makeTempDirectoryScoped();
     const statePath = path.join(root, "server-runtime.json");
+    const stdio = yield* Stdio.Stdio;
     let observed = false;
     yield* Command.runWith(doctorCommand, { version: "test" })([
       "hold-ownership",
       "--state-dir",
       root,
     ]).pipe(
-      Effect.provide(
-        Layer.mock(Stdio.Stdio)({
-          stdin: Stream.fromEffect(
-            Effect.gen(function* () {
-              const error = yield* Effect.scoped(holdServerOwnershipLock(statePath)).pipe(
-                Effect.flip,
-              );
-              assert.equal(error._tag, "ServerAlreadyRunningError");
-              observed = true;
-              return new Uint8Array();
-            }),
-          ),
-        }),
-      ),
+      Effect.provideService(Stdio.Stdio, {
+        ...stdio,
+        stdin: Stream.fromEffect(
+          Effect.gen(function* () {
+            const error = yield* Effect.scoped(holdServerOwnershipLock(statePath)).pipe(
+              Effect.flip,
+              Effect.orDie,
+            );
+            assert.equal(error._tag, "ServerAlreadyRunningError");
+            observed = true;
+            return new Uint8Array();
+          }),
+        ),
+      }),
     );
     assert.isTrue(observed);
     yield* Effect.scoped(holdServerOwnershipLock(statePath));
