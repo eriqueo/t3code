@@ -1,16 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import {
-  CommandId,
-  REVIEW_PROVIDER_INSTANCE_ID,
-  type EnvironmentId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import { CommandId, REVIEW_PROVIDER_INSTANCE_ID, type EnvironmentId } from "@t3tools/contracts";
 import {
   latestContextCheckpoint,
   shouldPrepareThreadHandoff,
 } from "@t3tools/shared/contextHandoff";
 import type { ThreadHandoffCommand } from "@t3tools/client-runtime/state/threads";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
@@ -26,7 +22,10 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 export function useCompactHandoff(input: {
   readonly environmentId: EnvironmentId;
-  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projection: Pick<
+    ThreadStructure,
+    "thread" | "messages" | "runs" | "runtimeRequests"
+  > | null;
   readonly supported: boolean;
   readonly snapshotCurrent: boolean;
   readonly nowMinute: string;
@@ -58,6 +57,7 @@ export function useCompactHandoff(input: {
   const blocked =
     projection?.runtimeRequests.some((request) => request.status === "pending") === true;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronizes the server's durable handoff preparation with idle thread eligibility while mounted.
   useEffect(() => {
     if (!available || projection === null || source === undefined) return;
     const key = JSON.stringify([environmentId, projection.thread.id, source.id]);

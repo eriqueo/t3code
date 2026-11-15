@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   AuthTerminalOperateScope,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentAuthInvalidError,
@@ -81,7 +82,9 @@ it.layer(
     "denies read-only execution and release, then runs and retrieves the actual persisted exit",
     () =>
       Effect.gen(function* () {
-        const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["testRuns"]);
+        const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["testRuns"]).pipe(
+          Effect.provideService(EnvironmentVoiceBodyLimit, (effect) => effect),
+        );
         const payload = {
           version: 1 as const,
           requestId: "http",

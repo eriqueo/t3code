@@ -72,7 +72,7 @@ export const makeHandoffTestCollector = Effect.gen(function* () {
       } satisfies HandoffTestEvidence;
     });
     const result = yield* collect.pipe(
-      Effect.catch(() => Effect.succeed(unavailable("read_failed"))),
+      Effect.orElseSucceed(() => unavailable("read_failed")),
       Effect.timeoutOption("2 seconds"),
     );
     return Option.isSome(result) ? result.value : unavailable("timed_out");

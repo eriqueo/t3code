@@ -1,10 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { migrationManifest, runMigrations } from "./Migrations.ts";
+import { hasPendingMigrations, migrationManifest, runMigrations } from "./Migrations.ts";
+import ForkWorkspaceReceipts from "./Migrations/064_ForkWorkspaceReceipts.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -26,14 +30,113 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("migrates a fresh database through the whole manifest", () =>
+  it.effect("bridges the known fork collision without losing receipts and replays safely", () =>
     Effect.gen(function* () {
-      yield* runMigrations();
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* ForkWorkspaceReceipts;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (64, 'ForkWorkspaceReceipts')`;
+      yield* sql`INSERT INTO logical_projects VALUES ('logical', 'project', 'Retained project', 1)`;
+      yield* sql`INSERT INTO test_runs VALUES ('request', '{}', '/retained/checkout', 1, '{"reservedAt":"2026-11-15"}')`;
+      assert.isTrue(yield* hasPendingMigrations());
+      const before = yield* sql`SELECT * FROM test_runs`;
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 64),
+      );
+      assert.deepStrictEqual(yield* sql`SELECT * FROM test_runs`, before);
+      assert.deepStrictEqual(yield* sql`SELECT title FROM logical_projects`, [
+        { title: "Retained project" },
+      ]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT name, legacy_migration_id, legacy_migration_name FROM hwc_schema_migrations`,
+        [
+          {
+            name: "workspace-receipts-v1",
+            legacy_migration_id: 64,
+            legacy_migration_name: "ForkWorkspaceReceipts",
+          },
+        ],
+      );
       assert.deepStrictEqual(yield* history, migrationManifest);
-      assert.isAbove(yield* v2TableCount, 0);
+      assert.isFalse(yield* hasPendingMigrations());
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM test_runs`, before);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect.each([
+    "missing-schema",
+    "changed-schema",
+    "missing-history",
+    "later-history",
+    "ledger-write",
+  ] as const)("rejects %s without partially bridging migration 64", (failure) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* ForkWorkspaceReceipts;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (64, 'ForkWorkspaceReceipts')`;
+      if (failure === "missing-schema") yield* sql`DROP INDEX test_runs_active_checkout`;
+      if (failure === "changed-schema")
+        yield* sql`ALTER TABLE test_runs ADD COLUMN unexpected TEXT`;
+      if (failure === "missing-history")
+        yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 59`;
+      if (failure === "later-history")
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (65, 'CodexUsageNativeTurnIndex')`;
+      if (failure === "ledger-write")
+        yield* sql`CREATE TRIGGER fail_bridge BEFORE UPDATE ON effect_sql_migrations BEGIN SELECT RAISE(ABORT, 'injected bridge failure'); END`;
+      const payload = JSON.stringify({
+        updatedAt: "2026-11-15T00:00:00.000Z",
+        linkedPullRequest: {
+          projectId: "project",
+          repository: "acme/web",
+          number: 42,
+          url: "https://github.com/acme/web/pull/42",
+        },
+      });
+      yield* sql`INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES ('bridge-event', 'thread', 'bridge-thread', 0, 'thread.created', '2026-11-15T00:00:00.000Z',
+        'user', ${payload}, '{}', 2)`;
+      const before = yield* history;
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(yield* history, before);
+      assert.deepStrictEqual(
+        yield* sql`SELECT payload_json FROM orchestration_events WHERE event_id = 'bridge-event'`,
+        [{ payload_json: payload }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT name FROM sqlite_master WHERE name = 'hwc_schema_migrations'`,
+        [],
+      );
+      if (failure === "ledger-write") {
+        yield* sql`DROP TRIGGER fail_bridge`;
+        yield* runMigrations();
+        assert.deepStrictEqual(yield* history, migrationManifest);
+      }
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("adds the fork ledger to an upstream database and includes it in readiness", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      yield* sql`DROP TABLE hwc_schema_migrations`;
+      assert.isTrue(yield* hasPendingMigrations());
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.isFalse(yield* hasPendingMigrations());
+      assert.deepStrictEqual(yield* sql`SELECT legacy_migration_id FROM hwc_schema_migrations`, [
+        { legacy_migration_id: null },
+      ]);
+      yield* sql`INSERT INTO hwc_schema_migrations (name) VALUES ('workspace-receipts-v2')`;
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 95`;
+      const before = yield* history;
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(yield* history, before);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -83,6 +186,44 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("drops the unused correlation index and keeps correlation values", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json
+        )
+        VALUES (
+          'event-1', 'thread', 'thread-1', 0, 'thread.created', '2026-01-01T00:00:00.000Z',
+          'command-1', NULL, 'correlation-1', 'client', '{}', '{}'
+        )
+      `;
+
+      yield* runMigrations();
+
+      const indexes = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'orchestration_events' AND sql IS NOT NULL
+      `;
+      const indexNames = indexes.map((row) => row.name);
+      assert.notInclude(indexNames, "idx_orch_events_correlation_id");
+      for (const kept of [
+        "idx_orch_events_stream_version",
+        "idx_orch_events_stream_sequence",
+        "idx_orch_events_command_id",
+        "idx_orchestration_events_agent_stream_sequence",
+      ]) {
+        assert.include(indexNames, kept);
+      }
+      const events = yield* sql<{ readonly correlation_id: string | null }>`
+        SELECT correlation_id FROM orchestration_events WHERE event_id = 'event-1'
+      `;
+      assert.deepStrictEqual(events, [{ correlation_id: "correlation-1" }]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -118,6 +259,36 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("keeps the migrations that finished before a later one failed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 81 });
+      yield* sql`CREATE TABLE orchestration_v2_projection_turn_item_counts (thread_id TEXT)`;
+
+      const exit = yield* Effect.exit(runMigrations());
+
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepStrictEqual(
+        yield* history,
+        migrationManifest.filter(([id]) => id <= 84),
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("reapplies peer link migrations whose ledger rows are missing", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 72 });
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id BETWEEN 70 AND 72`;
+
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 70),
+      );
+      assert.deepStrictEqual(yield* history, migrationManifest);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("still starts after a newer build recorded a later V2 migration", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -131,3 +302,22 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });
+
+// The npm launcher reads the highest migration id from these file names.
+it.effect("registers every migration file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(import.meta.dirname, "Migrations");
+    const files = (yield* fs.readDirectory(dir)).flatMap((name) => {
+      // Historical filename retained for the explicit fork bridge, outside upstream numbering.
+      if (name === "064_ForkWorkspaceReceipts.ts") return [];
+      const match = /^(\d+)_(\w+)\.ts$/.exec(name);
+      return match ? [[Number(match[1]), match[2]] as const] : [];
+    });
+    assert.deepStrictEqual(
+      files.toSorted(([a], [b]) => a - b),
+      migrationManifest,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

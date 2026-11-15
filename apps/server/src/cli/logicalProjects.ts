@@ -48,10 +48,8 @@ export class LogicalProjectCliUnavailable extends Schema.TaggedError<LogicalProj
     return "A running T3 server is required. Start it and retry; no offline registration was performed.";
   }
 }
-export const requireLogicalProjectServer = <A>(state: Option.Option<A>) =>
-  Option.isSome(state)
-    ? Effect.succeed(state.value)
-    : Effect.fail(new LogicalProjectCliUnavailable());
+const requireLogicalProjectServer = <A>(state: Option.Option<A>) =>
+  Effect.fromOption(state).pipe(Effect.mapError(() => new LogicalProjectCliUnavailable()));
 
 // The CLI is only an authenticated client. It never loads the ownership repository
 // or an offline orchestration runtime, including after connection failures.

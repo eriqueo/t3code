@@ -34,7 +34,7 @@ const makeAuth = (
   const requests: string[] = [];
   const layer = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
     authenticateWebSocketUpgrade: (request) => {
-      requests.push(request.originalUrl);
+      requests.push(request.url);
       return error
         ? Effect.fail(error)
         : Effect.succeed({
@@ -57,6 +57,7 @@ const mutations = [
   { type: "navigate", url: "https://example.com" },
   { type: "history", delta: -1 },
   { type: "reload" },
+  { type: "stopLoading" },
   { type: "probe", x: 10, y: 10 },
   { type: "takeControl" },
   { type: "releaseControl" },
@@ -88,7 +89,7 @@ it.effect.each([
     });
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: (input) =>
@@ -133,8 +134,7 @@ it.effect.each([
       received.resolve();
     });
     yield* Effect.promise(() => received.promise);
-    // The ack follows every mutation on the socket, so this is also a barrier
-    // proving all preceding inputs were processed, without a timing sleep.
+    // The socket ack follows every mutation, providing a barrier without sleeps.
     yield* Effect.promise(() => acked.promise);
     expect(frames).toEqual([frame]);
     expect(viewports).toEqual([{ type: "viewport", width: 1280, height: 800 }]);
@@ -150,7 +150,79 @@ it.effect.each([
       },
     ]);
     expect(auth.requests).toEqual([resource]);
-  }).pipe(Effect.scoped),
+  }),
+);
+
+it.effect("sends replies ahead of stale frames and only the newest frame after an ack", () =>
+  Effect.gen(function* () {
+    const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
+    const released: number[] = [];
+    const frame = (id: number): ServerBrowser.ServerBrowserViewerOutput => ({
+      _tag: "frame",
+      data: new Uint8Array([id]),
+      ack: Effect.sync(() => void released.push(id)),
+    });
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
+      openDownload: () => Effect.succeedNone,
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
+    });
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        routeLayer.pipe(
+          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+          Layer.provide(platformLayer),
+        ),
+        { disableListenLog: true },
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+      ),
+    );
+    const server = Context.get(services, HttpServer.HttpServer);
+    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+    const received: Array<number | string> = [];
+    let next = Promise.withResolvers<void>();
+    const socket = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new WebSocket(
+            `${origin}/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket`,
+          ),
+      ),
+      (socket) => Effect.sync(() => socket.close()),
+    );
+    socket.binaryType = "arraybuffer";
+    socket.addEventListener("message", (event) => {
+      received.push(
+        typeof event.data === "string"
+          ? JSON.parse(event.data).type
+          : new Uint8Array(event.data as ArrayBuffer)[0]!,
+      );
+      next.resolve();
+    });
+
+    yield* Queue.offer(output, frame(1));
+    yield* Effect.promise(() => next.promise);
+    next = Promise.withResolvers();
+    yield* Queue.offerAll(output, [
+      frame(2),
+      frame(3),
+      frame(4),
+      { _tag: "probe", x: 0, y: 0, editable: false },
+    ]);
+    yield* Effect.promise(() => next.promise);
+    expect(received).toEqual([1, "probe"]);
+    expect(released).toEqual([2, 3]);
+
+    next = Promise.withResolvers();
+    socket.send(JSON.stringify({ type: "ack" }));
+    yield* Effect.promise(() => next.promise);
+    expect(received).toEqual([1, "probe", 4]);
+    expect(released).toEqual([2, 3, 1]);
+  }),
 );
 
 it.effect.each([
@@ -163,7 +235,7 @@ it.effect.each([
     let attachments = 0;
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => {
@@ -193,7 +265,7 @@ it.effect.each([
     );
     expect(response.status).toBe(testCase.status);
     expect(attachments).toBe(0);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("serves a tab's download only to an authorized session", () =>
@@ -204,7 +276,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
     const requests: Array<unknown> = [];
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: (input) =>
         Effect.sync(() => {
           requests.push(input);
@@ -252,7 +324,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
     const answers: Array<{ chooserId: string; files: Array<{ name: string; text: string }> }> = [];
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: (input) =>
         Effect.sync(() => {
@@ -298,7 +370,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
     expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 const decodeHostSetup = Schema.decodeUnknownEffect(Schema.fromJsonString(PreviewStreamHostSetup));
@@ -321,7 +393,7 @@ it.effect.each([
   Effect.gen(function* () {
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
-      reportProfiles: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => Effect.fail(new ServerBrowser.ServerBrowserLaunchError({ cause: error })),
@@ -359,5 +431,5 @@ it.effect.each([
       need,
       command: "sudo t3 browser setup",
     });
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, ThreadId, NonNegativeInt } from "./baseSchemas.ts";
 
-export const TEST_RUN_MAX_SECONDS = 600;
+const TEST_RUN_MAX_SECONDS = 600;
 const Id = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,128}$/));
 const Argument = Schema.String.check(Schema.isMaxLength(4096), Schema.isPattern(/^[^\0]*$/));
 const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));

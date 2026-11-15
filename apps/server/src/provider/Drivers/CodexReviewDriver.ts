@@ -4,7 +4,7 @@ import {
   REVIEW_PROVIDER_INSTANCE_ID,
   TextGenerationError,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -37,7 +37,7 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 type ReviewDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | ServerConfig
@@ -52,146 +52,146 @@ export const makeCodexReviewDriver = (
   metadata: { displayName: "Review", supportsMultipleInstances: false },
   configSchema: reviewConfig,
   defaultConfig: () => ({}),
-  create: ({ instanceId, environment, enabled }) =>
-    Effect.gen(function* () {
-      if (instanceId !== REVIEW_PROVIDER_INSTANCE_ID || environment.length > 0 || !enabled) {
-        return yield* new ProviderDriverError({
-          driver: DRIVER_KIND,
-          instanceId,
-          detail: "Review requires its server-owned configuration.",
-        });
-      }
-      const factory = yield* makeReviewClientFactory(launch);
-      const capabilities = {
-        ...CodexProviderCapabilitiesV2,
-        sessions: {
-          ...CodexProviderCapabilitiesV2.sessions,
-          supportsMultipleProviderThreadsPerSession: false,
-          supportsModelSwitchInSession: false,
-          supportsRuntimeModeSwitchInSession: false,
-          supportsProviderSwitchingViaHandoff: false,
-        },
-        threads: {
-          ...CodexProviderCapabilitiesV2.threads,
-          canRollbackThread: false,
-          canForkThread: false,
-          canForkFromTurn: false,
-          canForkFromSubagentThread: false,
-        },
-        turns: {
-          ...CodexProviderCapabilitiesV2.turns,
-          supportsActiveSteering: false,
-          supportsSteeringByInterruptRestart: false,
-        },
-        tools: {
-          ...CodexProviderCapabilitiesV2.tools,
-          supportsMcpTools: false,
-          supportsDynamicToolCallbacks: false,
-        },
-        approvals: {
-          ...CodexProviderCapabilitiesV2.approvals,
-          supportsCommandApproval: false,
-          supportsFileReadApproval: false,
-          supportsFileChangeApproval: false,
-          supportsApplyPatchApproval: false,
-        },
-        subagents: {
-          ...CodexProviderCapabilitiesV2.subagents,
-          supportsSubagents: false,
-          canWaitForSubagents: false,
-          canCloseSubagents: false,
-          canForkSubagentThread: false,
-        },
-        checkpointing: {
-          ...CodexProviderCapabilitiesV2.checkpointing,
-          appCanCheckpointFilesystem: false,
-          supportsNestedCheckpointScopes: false,
-          providerCanRollbackConversation: false,
-        },
-      };
-      const ordinaryAdapter = yield* makeCodexAdapterV2({
+  create: Effect.fn("Review.create")(function* ({ instanceId, environment, enabled }) {
+    if (instanceId !== REVIEW_PROVIDER_INSTANCE_ID || environment.length > 0 || !enabled) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
         instanceId,
-        capabilities,
-        settings: decodeCodexSettings({
-          enabled: true,
-          binaryPath: "controlled-review",
-          launchArgs: "",
-        }),
-        environment: {},
-        clientFactory: factory,
-        crypto: yield* Crypto.Crypto,
-        fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig,
+        detail: "Review requires its server-owned configuration.",
       });
-      const continuationIdentity = {
-        driverKind: DRIVER_KIND,
-        continuationKey: "codex:review:ephemeral",
-      };
-      const checkedAt = DateTime.formatIso(yield* DateTime.now);
-      const snapshot = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName: "Review",
-        accentColor: undefined,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      })(
-        buildServerProvider({
-          presentation: {
-            displayName: "Review",
-            supportsConversationRollback: false,
-            showInteractionModeToggle: false,
-            requiresNewThreadForModelChange: true,
+    }
+    const factory = yield* makeReviewClientFactory(launch);
+    const capabilities = {
+      ...CodexProviderCapabilitiesV2,
+      sessions: {
+        ...CodexProviderCapabilitiesV2.sessions,
+        supportsMultipleProviderThreadsPerSession: false,
+        supportsModelSwitchInSession: false,
+        supportsRuntimeModeSwitchInSession: false,
+        supportsProviderSwitchingViaHandoff: false,
+      },
+      threads: {
+        ...CodexProviderCapabilitiesV2.threads,
+        canRollbackThread: false,
+        canForkThread: false,
+        canForkFromTurn: false,
+        canForkFromSubagentThread: false,
+      },
+      turns: {
+        ...CodexProviderCapabilitiesV2.turns,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+      },
+      tools: {
+        ...CodexProviderCapabilitiesV2.tools,
+        supportsMcpTools: false,
+        supportsDynamicToolCallbacks: false,
+      },
+      approvals: {
+        ...CodexProviderCapabilitiesV2.approvals,
+        supportsCommandApproval: false,
+        supportsFileReadApproval: false,
+        supportsFileChangeApproval: false,
+        supportsApplyPatchApproval: false,
+      },
+      subagents: {
+        ...CodexProviderCapabilitiesV2.subagents,
+        supportsSubagents: false,
+        canWaitForSubagents: false,
+        canCloseSubagents: false,
+        canForkSubagentThread: false,
+      },
+      checkpointing: {
+        ...CodexProviderCapabilitiesV2.checkpointing,
+        appCanCheckpointFilesystem: false,
+        supportsNestedCheckpointScopes: false,
+        providerCanRollbackConversation: false,
+      },
+    };
+    const ordinaryAdapter = yield* makeCodexAdapterV2({
+      instanceId,
+      capabilities,
+      settings: decodeCodexSettings({
+        enabled: true,
+        binaryPath: "controlled-review",
+        launchArgs: "",
+      }),
+      environment: {},
+      clientFactory: factory,
+      digest: yield* Digest.Digest,
+      fileSystem: yield* FileSystem.FileSystem,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      serverConfig: yield* ServerConfig,
+    });
+    const continuationIdentity = {
+      driverKind: DRIVER_KIND,
+      continuationKey: "codex:review:ephemeral",
+    };
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const snapshot = withInstanceIdentity({
+      instanceId,
+      driverKind: DRIVER_KIND,
+      displayName: "Review",
+      accentColor: undefined,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    })(
+      buildServerProvider({
+        presentation: {
+          displayName: "Review",
+          supportsConversationRollback: false,
+          showInteractionModeToggle: false,
+        },
+        enabled: true,
+        checkedAt,
+        models: [
+          {
+            slug: CODEX_REVIEW_MODEL,
+            name: CODEX_REVIEW_MODEL,
+            isCustom: false,
+            isDefault: true,
+            capabilities: null,
           },
-          enabled: true,
-          checkedAt,
-          models: [
-            {
-              slug: CODEX_REVIEW_MODEL,
-              name: CODEX_REVIEW_MODEL,
-              isCustom: false,
-              isDefault: true,
-              capabilities: null,
-            },
-          ],
-          probe: {
-            installed: true,
-            version: CODEX_REVIEW_NATIVE_VERSION,
-            status: "ready",
-            auth: { status: "unknown" },
-            message: "Review checks the native isolation policy before each session and turn.",
-          },
+        ],
+        probe: {
+          installed: true,
+          version: CODEX_REVIEW_NATIVE_VERSION,
+          status: "ready",
+          auth: { status: "unknown" },
+          message: "Review checks the native isolation policy before each session and turn.",
+        },
+      }),
+    );
+    const noGeneration = (operation: string) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation,
+          detail: "Review cannot run background generation.",
         }),
       );
-      const noGeneration = (operation: string) =>
-        Effect.fail(
-          new TextGenerationError({
-            operation,
-            detail: "Review cannot run background generation.",
-          }),
-        );
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName: "Review",
-        enabled: true,
-        snapshot: {
-          resolveMaintenance: () =>
-            Effect.succeed({ provider: DRIVER_KIND, packageName: null, update: null }),
-          getSnapshot: Effect.succeed(snapshot),
-          refresh: Effect.succeed(snapshot),
-          streamChanges: Stream.empty,
-          applyUsageLimits: () => Effect.void,
-        },
-        orchestrationAdapter: ordinaryAdapter,
-        textGeneration: {
-          generateReviewGuide: () => noGeneration("generateReviewGuide"),
-          generateCommitMessage: () => noGeneration("generateCommitMessage"),
-          generatePrContent: () => noGeneration("generatePrContent"),
-          generateBranchName: () => noGeneration("generateBranchName"),
-          generateThreadTitle: () => noGeneration("generateThreadTitle"),
-        },
-      } satisfies ProviderInstance;
-    }),
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName: "Review",
+      enabled: true,
+      snapshot: {
+        resolveMaintenance: () =>
+          Effect.succeed({ provider: DRIVER_KIND, packageName: null, update: null }),
+        getSnapshot: Effect.succeed(snapshot),
+        refresh: Effect.succeed(snapshot),
+        streamChanges: Stream.empty,
+        applyUsageLimits: () => Effect.void,
+      },
+      orchestrationAdapter: ordinaryAdapter,
+      textGeneration: {
+        generateTranscriptionPostProcessing: () =>
+          noGeneration("generateTranscriptionPostProcessing"),
+        generateReviewGuide: () => noGeneration("generateReviewGuide"),
+        generateCommitMessage: () => noGeneration("generateCommitMessage"),
+        generatePrContent: () => noGeneration("generatePrContent"),
+        generateBranchName: () => noGeneration("generateBranchName"),
+        generateThreadTitle: () => noGeneration("generateThreadTitle"),
+      },
+    } satisfies ProviderInstance;
+  }),
 });

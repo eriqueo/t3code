@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentAuthInvalidError,
@@ -65,7 +66,9 @@ it.layer(
     "requires authentication and write scope; records server actor rather than execution authority",
     () =>
       Effect.gen(function* () {
-        const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["logicalProjects"]);
+        const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["logicalProjects"]).pipe(
+          Effect.provideService(EnvironmentVoiceBodyLimit, (effect) => effect),
+        );
         const payload = {
           version: 1 as const,
           requestId: "r",

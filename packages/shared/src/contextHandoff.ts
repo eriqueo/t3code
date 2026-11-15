@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-export const CONTEXT_CHECKPOINT_VERSION = 1;
+const CONTEXT_CHECKPOINT_VERSION = 1;
 const CONTEXT_CHECKPOINT_MARKER_NAME = "t3-context-checkpoint";
 export const CONTEXT_CHECKPOINT_START_MARKER = `<!-- ${CONTEXT_CHECKPOINT_MARKER_NAME}:v${CONTEXT_CHECKPOINT_VERSION} -->`;
 export const CONTEXT_CHECKPOINT_END_MARKER = `<!-- /${CONTEXT_CHECKPOINT_MARKER_NAME} -->`;
@@ -108,7 +108,7 @@ export function renderHandoffWorkspaceObservation(
   ].join("\n\n");
 }
 
-export const THREAD_HANDOFF_IDLE_MS = 8 * 60 * 60 * 1_000;
+const THREAD_HANDOFF_IDLE_MS = 8 * 60 * 60 * 1_000;
 const encodeRuntimeObservation = Schema.encodeSync(
   Schema.fromJsonString(HandoffRuntimeObservation),
 );
@@ -130,7 +130,7 @@ export function renderHandoffTestEvidence(evidence: HandoffTestEvidence): string
     encodeTestEvidence(evidence),
   ].join("\n\n");
 }
-export const THREAD_HANDOFF_MIN_USED_TOKENS = 100_000;
+const THREAD_HANDOFF_MIN_USED_TOKENS = 100_000;
 
 export type ThreadHandoffState =
   | { readonly state: "none" }

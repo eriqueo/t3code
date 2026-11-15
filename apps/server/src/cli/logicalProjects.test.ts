@@ -4,6 +4,7 @@ import { resolveCliAuthConfig } from "./config.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as Layer from "effect/Layer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +13,7 @@ import { makeCli } from "../binCli.ts";
 import { GlobalFlag, Command } from "effect/cli";
 import { LogicalProjectCliUnavailable, runLogicalProjectCommand } from "./logicalProjects.ts";
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))(
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
   "logical project CLI live-only",
   (it) => {
     it.effect("test-run CLI refuses offline execution and creates no run store", () =>
@@ -51,7 +52,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))(
   },
 );
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))(
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
   "logical project CLI disconnected",
   (it) => {
     it.effect("does not register offline after a persisted server origin refuses the request", () =>

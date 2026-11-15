@@ -4,6 +4,7 @@ import {
   AuthSessionId,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentAuthInvalidError,
@@ -76,7 +77,9 @@ it.effect.each([false, true])(
       ),
     );
     return Effect.gen(function* () {
-      const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["review"]);
+      const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["review"]).pipe(
+        Effect.provideService(EnvironmentVoiceBodyLimit, (effect) => effect),
+      );
       const denied = yield* Effect.result(client.review.reviewCapability({ headers: {} }));
       assert.equal(denied._tag, "Failure");
       const noScope = yield* Effect.result(

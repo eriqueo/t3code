@@ -82,13 +82,14 @@ export const makeRuntimeObserver = (ports: RuntimeObservationPorts) =>
       });
     });
     const result = yield* collect.pipe(
-      Effect.catch(() =>
-        Effect.succeed({
-          version: 1,
-          state: "unavailable",
-          collectedAt,
-          code: "read_failed",
-        } satisfies HandoffRuntimeObservation),
+      Effect.orElseSucceed(
+        () =>
+          ({
+            version: 1,
+            state: "unavailable",
+            collectedAt,
+            code: "read_failed",
+          }) satisfies HandoffRuntimeObservation,
       ),
       Effect.timeoutOption("2 seconds"),
     );
@@ -123,14 +124,12 @@ export const makeHandoffRuntimeObserver = Effect.gen(function* () {
     return new TextDecoder().decode(Uint8Array.from(chunks)).trim();
   }).pipe(
     Effect.scoped,
-    Effect.catch((error) =>
-      Effect.fail(
-        typeof error === "string"
-          ? error
-          : error.reason._tag === "NotFound"
-            ? ("not_found" as const)
-            : ("read_failed" as const),
-      ),
+    Effect.mapError((error) =>
+      typeof error === "string"
+        ? error
+        : error.reason._tag === "NotFound"
+          ? ("not_found" as const)
+          : ("read_failed" as const),
     ),
   );
   return makeRuntimeObserver({

@@ -18,6 +18,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -30,6 +31,7 @@ export const layer = HttpApiBuilder.group(
       | FileSystem.FileSystem
       | ServerConfig.ServerConfig
       | ServerSettings.ServerSettingsService
+      | DocumentText.DocumentText
     >();
 
     return handlers.handle(

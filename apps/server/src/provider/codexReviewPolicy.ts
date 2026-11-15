@@ -3,14 +3,14 @@ import * as Schema from "effect/Schema";
 
 export const CODEX_REVIEW_MODEL = REVIEW_MODEL_ID;
 export const CODEX_REVIEW_NATIVE_VERSION = "codex-cli 0.163.0";
-export const CODEX_REVIEW_NATIVE_FILES = {
+const CODEX_REVIEW_NATIVE_FILES = {
   "bin/codex": "399ff69c431c066e40de318fba45c2b07f45a76b19939d247ee4828fc70c4215",
   "bin/codex-code-mode-host": "8724d73ec190536233ab4628d24a071bfbcf27e5124f08fe35129f26fe48b916",
   "codex-resources/bwrap": "77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c",
 } as const;
 
 /** The model requires the isolated V8 tool host; nested effects still use native sandbox checks. */
-export const CODEX_REVIEW_FEATURES = {
+const CODEX_REVIEW_FEATURES = {
   apps: false,
   multi_agent: false,
   multi_agent_v2: false,

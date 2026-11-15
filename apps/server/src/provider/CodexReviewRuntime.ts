@@ -24,11 +24,12 @@ import {
 } from "./codexReviewPolicy.ts";
 
 const refusal = (method: string) =>
-  CodexErrors.CodexAppServerRequestError.invalidParams(
-    "Review requires its verified read-only native policy.",
-    undefined,
-    { method, operation: "handle-request" },
-  );
+  new CodexErrors.CodexAppServerRequestError({
+    code: -32602,
+    errorMessage: "Review requires its verified read-only native policy.",
+    method,
+    operation: "handle-request",
+  });
 const driver = ProviderDriverKind.make("codex");
 const encodeLaunchSpec = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const ModelInput = Schema.Struct({ model: Schema.optional(Schema.String) });
@@ -149,95 +150,94 @@ export const makeReviewClientFactory = Effect.fn("Review.makeClientFactory")(fun
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return {
-    open: (input) =>
-      Effect.gen(function* () {
-        if (input.instanceId !== REVIEW_PROVIDER_INSTANCE_ID) {
-          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
-            driver,
-            providerSessionId: input.providerSessionId,
-            cause: "reserved Review identity required",
-          });
-        }
-        const parent = yield* Scope.Scope;
-        const owned = yield* Scope.make();
-        const close = Scope.close(owned, Exit.void);
-        yield* Scope.addFinalizer(parent, close);
-        return yield* Effect.gen(function* () {
-          // AUTO-MANAGED: scoped directory and 128 MiB private tmpfs are removed
-          // when this owned PID namespace exits; credentials never enter logs.
-          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-review-" });
-          yield* fs.chmod(directory, 0o700);
-          const workspace = path.join(directory, "private");
-          yield* fs.makeDirectory(workspace, { mode: 0o700 });
-          const launcher = path.join(directory, "launch.py");
-          yield* fs.writeFileString(
-            launcher,
-            CODEX_REVIEW_LAUNCH_SCRIPT.replace(/^#![^\n]*/, `#!${launch.pythonPath}`),
-          );
-          yield* fs.chmod(launcher, 0o700);
-          const handle = yield* spawner.spawn(
-            ChildProcess.make(launcher, ["app-server"], {
-              cwd: directory,
-              extendEnv: false,
-              forceKillAfter: "5 seconds",
-              env: {
-                PATH: launch.path,
-                T3_REVIEW_LAUNCH_SPEC: encodeLaunchSpec(reviewLaunchSpec(launch, workspace)),
-              },
-              stdin: "pipe",
-              stdout: "pipe",
-              stderr: "pipe",
-            }),
-          );
-          const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
-          const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-            Effect.provide(context),
-          );
-          const request = makeReviewRequest({
-            homePath: path.join(workspace, "home", "codex"),
-            cwd: path.join(workspace, "neutral"),
-            request: client.raw.request,
-            close,
-          });
-          const typedRequest: CodexClient.CodexAppServerClient["Service"]["request"] = (
-            method,
-            payload,
-          ) =>
-            request(method, payload).pipe(
-              Effect.flatMap((result) => {
-                // Same generated response vocabulary as the ordinary client; the
-                // raw response is checked for Review's extra native receipts first.
-                const schema = CodexRpc.CLIENT_REQUEST_RESPONSES[method] as unknown as Schema.Codec<
-                  CodexRpc.ClientRequestResponsesByMethod[typeof method],
-                  unknown
-                >;
-                return Schema.decodeUnknownEffect(schema)(result).pipe(
-                  Effect.mapError(() => refusal(method)),
-                );
-              }),
-              Effect.onError(() => close),
-            );
-          return {
-            ...client,
-            request: typedRequest,
-            raw: { ...client.raw, request },
-            handleServerRequest: (method) =>
-              client.handleServerRequest(method, () => refusal(method)),
-            handleUnknownServerRequest: () =>
-              client.handleUnknownServerRequest((method) => refusal(method)),
-          } satisfies CodexClient.CodexAppServerClient["Service"];
-        }).pipe(
-          Effect.provideService(Scope.Scope, owned),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-          ),
-          Effect.onError(() => close),
+    open: Effect.fn("Review.open")(function* (input) {
+      if (input.instanceId !== REVIEW_PROVIDER_INSTANCE_ID) {
+        return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+          driver,
+          providerSessionId: input.providerSessionId,
+          cause: "reserved Review identity required",
+        });
+      }
+      const parent = yield* Scope.Scope;
+      const owned = yield* Scope.make();
+      const close = Scope.close(owned, Exit.void);
+      yield* Scope.addFinalizer(parent, close);
+      return yield* Effect.gen(function* () {
+        // AUTO-MANAGED: scoped directory and 128 MiB private tmpfs are removed
+        // when this owned PID namespace exits; credentials never enter logs.
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-review-" });
+        yield* fs.chmod(directory, 0o700);
+        const workspace = path.join(directory, "private");
+        yield* fs.makeDirectory(workspace, { mode: 0o700 });
+        const launcher = path.join(directory, "launch.py");
+        yield* fs.writeFileString(
+          launcher,
+          CODEX_REVIEW_LAUNCH_SCRIPT.replace(/^#![^\n]*/, `#!${launch.pythonPath}`),
         );
-      }),
+        yield* fs.chmod(launcher, 0o700);
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(launcher, ["app-server"], {
+            cwd: directory,
+            extendEnv: false,
+            forceKillAfter: "5 seconds",
+            env: {
+              PATH: launch.path,
+              T3_REVIEW_LAUNCH_SPEC: encodeLaunchSpec(reviewLaunchSpec(launch, workspace)),
+            },
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          }),
+        );
+        const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
+        const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+          Effect.provide(context),
+        );
+        const request = makeReviewRequest({
+          homePath: path.join(workspace, "home", "codex"),
+          cwd: path.join(workspace, "neutral"),
+          request: client.raw.request,
+          close,
+        });
+        const typedRequest: CodexClient.CodexAppServerClient["Service"]["request"] = (
+          method,
+          payload,
+        ) =>
+          request(method, payload).pipe(
+            Effect.flatMap((result) => {
+              // Same generated response vocabulary as the ordinary client; the
+              // raw response is checked for Review's extra native receipts first.
+              const schema = CodexRpc.CLIENT_REQUEST_RESPONSES[method] as unknown as Schema.Codec<
+                CodexRpc.ClientRequestResponsesByMethod[typeof method],
+                unknown
+              >;
+              return Schema.decodeUnknownEffect(schema)(result).pipe(
+                Effect.mapError(() => refusal(method)),
+              );
+            }),
+            Effect.onError(() => close),
+          );
+        return {
+          ...client,
+          request: typedRequest,
+          raw: { ...client.raw, request },
+          handleServerRequest: (method) =>
+            client.handleServerRequest(method, () => refusal(method)),
+          handleUnknownServerRequest: () =>
+            client.handleUnknownServerRequest((method) => refusal(method)),
+        } satisfies CodexClient.CodexAppServerClient["Service"];
+      }).pipe(
+        Effect.provideService(Scope.Scope, owned),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver,
+              providerSessionId: input.providerSessionId,
+              cause,
+            }),
+        ),
+        Effect.onError(() => close),
+      );
+    }),
   } satisfies CodexAppServerClientFactoryShape;
 });

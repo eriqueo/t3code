@@ -14,7 +14,6 @@ import { formatContextCheckpoint } from "@t3tools/shared/contextHandoff";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -63,7 +62,7 @@ const preparationLayer = Preparation.layer.pipe(
     Layer.mergeAll(
       threadsLayer,
       database,
-      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(Option.none()) }),
+      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
       Layer.mock(ProcessRunner.ProcessRunner)({
         run: (input) =>
           input.command === "t3-dx2-handoff"

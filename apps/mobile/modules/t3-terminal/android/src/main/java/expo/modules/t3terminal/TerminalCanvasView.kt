@@ -21,10 +21,6 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * Bundled terminal font with Nerd Font glyphs (powerline, file icons).
- * MesloLGS NF is the powerlevel10k-tuned Meslo Nerd Font patch.
- */
 internal object TerminalTypefaces {
   private var loaded = false
   var regular: Typeface = Typeface.MONOSPACE
@@ -335,8 +331,9 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         canvas.drawRect(left, top, right, bottom, paint)
         val index = currentFrame.cursorY * currentFrame.cols + currentFrame.cursorX
         val text = currentFrame.cellText[index]
-        if (text.isNotEmpty()) {
-          configureTextPaint(currentFrame.cellFlags[index], currentFrame.background)
+        val flags = currentFrame.cellFlags[index]
+        if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
+          configureTextPaint(flags, currentFrame.background)
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
         }
       }
@@ -429,10 +426,6 @@ internal class TerminalCanvasView(context: Context) : View(context) {
 
   private fun handleRadius(): Float = max(cellHeightPx * 0.45f, 12f)
 
-  /**
-   * Begin dragging when the touch lands on a selection handle. The opposite
-   * endpoint becomes the drag anchor so the grabbed end follows the finger.
-   */
   private fun grabHandleAt(px: Float, py: Float): Boolean {
     if (!selectionActive || !selectionEndpointsValid) return false
     val slop = max(handleRadius() * 2f, 24 * density)
@@ -467,7 +460,6 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     return handleGrabbed
   }
 
-  /** Scan the decoded frame for the first/last selected cells. */
   private fun updateSelectionEndpoints() {
     selectionEndpointsValid = false
     val currentFrame = frame

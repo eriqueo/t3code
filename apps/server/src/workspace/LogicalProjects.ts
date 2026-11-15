@@ -123,10 +123,8 @@ export const makeLogicalProjects = Effect.fn("makeLogicalProjects")(function* (i
       WHERE l.project_id=${input.projectId}
       AND (${commonDirectory ?? null} IS NULL OR b.common_directory=${commonDirectory ?? null})
       AND (l.logical_project_id > ${input.after?.logicalProjectId ?? ""} OR (l.logical_project_id=${input.after?.logicalProjectId ?? ""} AND COALESCE(b.common_directory,'') > ${input.after?.commonDirectory ?? ""}))
-      ORDER BY l.logical_project_id,COALESCE(b.common_directory,'') LIMIT ${LOGICAL_PROJECT_PAGE_SIZE + 1}`.pipe(
-        Effect.mapError(storageFailure),
-      );
-    const decoded = yield* decodeBindings(rows).pipe(Effect.mapError(storageFailure));
+      ORDER BY l.logical_project_id,COALESCE(b.common_directory,'') LIMIT ${LOGICAL_PROJECT_PAGE_SIZE + 1}`;
+    const decoded = yield* decodeBindings(rows);
     // Transport bound only: callers traverse every row through the stable keyset cursor.
     const items = decoded.slice(0, LOGICAL_PROJECT_PAGE_SIZE);
     const last = items.at(-1);
@@ -137,7 +135,7 @@ export const makeLogicalProjects = Effect.fn("makeLogicalProjects")(function* (i
           ? { logicalProjectId: last.logicalProjectId, commonDirectory: last.commonDirectory ?? "" }
           : null,
     };
-  });
+  }, Effect.mapError(storageFailure));
   const resolve = Effect.fn("LogicalProjects.resolve")(function* (
     input: LogicalProjectResolveInput,
   ) {

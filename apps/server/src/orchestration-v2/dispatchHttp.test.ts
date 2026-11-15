@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentAuthInvalidError,
@@ -19,6 +20,7 @@ import * as Layer from "effect/Layer";
 import { HttpApiTest } from "effect/http-api";
 import { HttpServer, HttpServerRequest } from "effect/http";
 import * as DispatchHttp from "./dispatchHttp.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Startup from "../serverRuntimeStartup.ts";
@@ -95,6 +97,7 @@ const startup = Layer.effect(
   }),
 );
 const services = Layer.mergeAll(
+  DocumentText.layer,
   threads,
   ServerSettings.layerTest(),
   startup,
@@ -107,7 +110,9 @@ it.effect(
   "authorizes HTTP dispatch and deduplicates a deferred message through real command receipts",
   () =>
     Effect.gen(function* () {
-      const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["orchestrationDispatch"]);
+      const client = yield* HttpApiTest.groups(EnvironmentHttpApi, ["orchestrationDispatch"]).pipe(
+        Effect.provideService(EnvironmentVoiceBodyLimit, (effect) => effect),
+      );
       const threadId = ThreadId.make("http-dispatch-thread");
       const create = {
         type: "thread.create" as const,

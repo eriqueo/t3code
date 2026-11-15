@@ -30,6 +30,7 @@ export interface UsageChartWindow {
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly referenceTime: string | undefined;
+  readonly hour12: boolean;
 }
 
 export function UsageModelDialog({
@@ -87,14 +88,14 @@ export function UsageModelDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-8">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-xs text-muted-foreground">{stat.label}</span>
-                  <span className="text-2xl font-semibold text-foreground">{stat.value}</span>
+                  <dt className="text-xs text-muted-foreground">{stat.label}</dt>
+                  <dd className="text-2xl font-semibold text-foreground">{stat.value}</dd>
                 </div>
               ))}
-            </div>
+            </dl>
 
             {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
             <UsageProviderChart
@@ -107,6 +108,7 @@ export function UsageModelDialog({
               referenceTime={chartWindow.referenceTime}
               resolution={chartWindow.resolution}
               timeZone={chartWindow.timeZone}
+              hour12={chartWindow.hour12}
             />
 
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
