@@ -39,7 +39,7 @@ export function CompactHandoffCard(props: {
     (message) => message.role === "user" && !message.streaming,
   );
   const current = projection?.thread.compactHandoff;
-  const state = current?.sourceMessageId === source?.id ? current : null;
+  const state = current && source && current.sourceMessageId === source.id ? current : null;
   const available =
     props.supported &&
     canOperate &&
@@ -53,6 +53,7 @@ export function CompactHandoffCard(props: {
     ) === true;
   const blocked =
     projection?.runtimeRequests.some((request) => request.status === "pending") === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronizes the server's durable handoff preparation with idle thread eligibility while mounted.
   useEffect(() => {
     if (!available || !projection || !source) return;
     const key = JSON.stringify([environmentId, projection.thread.id, source.id]);
@@ -112,19 +113,19 @@ export function CompactHandoffCard(props: {
       const result = await dispatch({ environmentId, input: command });
       if (result._tag === "Failure") {
         setError("Could not update the handoff. Try again.");
-        return;
-      }
-      if (command.type === "thread.handoff.start")
+      } else if (command.type === "thread.handoff.start") {
         navigation.dispatch(
           StackActions.replace("Thread", {
             environmentId: String(environmentId),
             threadId: String(command.targetThreadId),
           }),
         );
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
+      }
+    } catch {
+      setError("Could not open the handoff. Try again.");
     }
+    busyRef.current = false;
+    setBusy(false);
   };
   if (available && error && !state)
     return (

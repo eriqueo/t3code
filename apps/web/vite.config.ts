@@ -140,7 +140,12 @@ const browserTestProject = {
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      // NixOS supplies Chromium with its native library closure.
+      provider: playwright(
+        process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+          ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } }
+          : {},
+      ),
       instances: [{ browser: "chromium" }],
       screenshotFailures: false,
       commands: {

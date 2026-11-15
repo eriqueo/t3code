@@ -123,10 +123,11 @@ export function useCompactHandoff(input: {
       } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         toastManager.add({ type: "error", title: "Could not update the handoff" });
       }
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
+    } catch {
+      toastManager.add({ type: "error", title: "Could not open the handoff" });
     }
+    busyRef.current = false;
+    setBusy(false);
   };
   if (
     !available ||
