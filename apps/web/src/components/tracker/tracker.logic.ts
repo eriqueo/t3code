@@ -94,7 +94,7 @@ export function progressFraction(progress: TrackerProgress): number | null {
 
 /** The hub's own document view, which renders Markdown and serves HTML, PDFs and images. */
 export function trackerDocUrl(hubUrl: string, workId: string, path: string): string {
-  return `${hubUrl}/p/${encodeURIComponent(workId)}/plan?doc=${encodeURIComponent(path)}`;
+  return `${hubUrl}/p/${encodeURIComponent(workId)}/docs?doc=${encodeURIComponent(path)}`;
 }
 
 /**

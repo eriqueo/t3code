@@ -157,10 +157,10 @@ describe("tracker logic", () => {
 
   it("opens a document in the hub's own viewer, escaping the record and path", () => {
     expect(trackerDocUrl("http://hub.test", "t3-tracker", "plan.md")).toBe(
-      "http://hub.test/p/t3-tracker/plan?doc=plan.md",
+      "http://hub.test/p/t3-tracker/docs?doc=plan.md",
     );
     expect(trackerDocUrl("http://hub.test", "a b", "notes/run 1.md")).toBe(
-      "http://hub.test/p/a%20b/plan?doc=notes%2Frun%201.md",
+      "http://hub.test/p/a%20b/docs?doc=notes%2Frun%201.md",
     );
   });
 
