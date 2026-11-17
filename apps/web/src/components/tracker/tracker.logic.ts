@@ -92,8 +92,54 @@ export function progressFraction(progress: TrackerProgress): number | null {
   return Math.min(1, Math.max(0, progress.done / progress.total));
 }
 
+/** The phase being worked on: one marked active, else the first not yet done. */
 export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase | null {
-  return phases.find((phase) => phase.status !== "done") ?? null;
+  return (
+    phases.find((phase) => phase.status === "active") ??
+    phases.find((phase) => phase.status !== "done") ??
+    null
+  );
+}
+
+/**
+ * Sidebar buttons. Each sends the agent in the linked conversation one message; the
+ * procedure for each id lives in the project-tracker skill's "Sidebar actions" section.
+ */
+export type TrackerActionId = "next-step" | "update-roadmap" | "handoff" | "grill" | "close-out";
+
+export interface TrackerAction {
+  readonly id: TrackerActionId;
+  readonly label: string;
+  /** Asks before sending: the action cannot be undone. */
+  readonly confirm: boolean;
+}
+
+const PROJECT_ACTIONS: ReadonlyArray<TrackerAction> = [
+  { id: "next-step", label: "Next Step", confirm: false },
+  { id: "update-roadmap", label: "Update Roadmap", confirm: false },
+  { id: "handoff", label: "Handoff", confirm: false },
+  { id: "grill", label: "Grill the Plan", confirm: false },
+  { id: "close-out", label: "Close Out", confirm: true },
+];
+
+const PROJECT_ONLY = new Set<TrackerActionId>(["update-roadmap", "handoff"]);
+
+/** A task has no phases and no handoff, so it gets no roadmap or handoff button. */
+export function trackerActions(
+  work: Pick<TrackerWorkDetail, "kind">,
+): ReadonlyArray<TrackerAction> {
+  return work.kind === "project"
+    ? PROJECT_ACTIONS
+    : PROJECT_ACTIONS.filter((action) => !PROJECT_ONLY.has(action.id));
+}
+
+/** Names the record and this thread so the skill can refuse when the link has moved. */
+export function trackerActionMessage(
+  id: TrackerActionId,
+  workId: string,
+  threadId: string,
+): string {
+  return `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
 }
 
 export function phaseStatusLabel(phase: Pick<TrackerPhase, "status" | "wait">): string {

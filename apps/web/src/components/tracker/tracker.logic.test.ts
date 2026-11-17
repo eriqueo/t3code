@@ -7,6 +7,8 @@ import {
   linkedWorkIdForThread,
   progressFraction,
   resumableThreadId,
+  trackerActionMessage,
+  trackerActions,
   workStatus,
 } from "./tracker.logic";
 
@@ -124,6 +126,36 @@ describe("tracker logic", () => {
     expect(
       currentPhase([phase("P1", "done"), phase("P2", "waiting"), phase("P3", "next")])?.id,
     ).toBe("P2");
+    expect(
+      currentPhase([phase("P1", "done"), phase("P2", "next"), phase("P3", "active")])?.id,
+    ).toBe("P3");
     expect(currentPhase([phase("P1", "done")])).toBeNull();
+  });
+
+  it("offers roadmap and handoff only to projects, and confirms only Close Out", () => {
+    expect(trackerActions({ kind: "project" }).map((action) => action.id)).toEqual([
+      "next-step",
+      "update-roadmap",
+      "handoff",
+      "grill",
+      "close-out",
+    ]);
+    expect(trackerActions({ kind: "task" }).map((action) => action.id)).toEqual([
+      "next-step",
+      "grill",
+      "close-out",
+    ]);
+    expect(trackerActions({ kind: null }).some((action) => action.id === "handoff")).toBe(false);
+    expect(
+      trackerActions({ kind: "project" })
+        .filter((action) => action.confirm)
+        .map((action) => action.id),
+    ).toEqual(["close-out"]);
+  });
+
+  it("names the skill, the action, the record and the thread in each message", () => {
+    expect(trackerActionMessage("update-roadmap", "t3-tracker", "thread-1")).toBe(
+      "Use project-tracker: sidebar action `update-roadmap` on record `t3-tracker` from thread `thread-1`.",
+    );
   });
 });

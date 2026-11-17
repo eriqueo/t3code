@@ -190,9 +190,11 @@ export function TrackerWorkView(props: {
   work: TrackerWorkDetail;
   domainColour: string | null;
   domainLabel: string | null;
-  /** The panel keeps to progress and the next action; the page adds history. */
+  /** The panel keeps to the roadmap and agent actions; the page adds the conversation and history. */
   density: "panel" | "page";
   actions?: ReactNode;
+  /** Buttons that ask the agent to work on this record, shown under the roadmap. */
+  agentActions?: ReactNode;
 }) {
   const { work } = props;
   const status = workStatus({
@@ -226,6 +228,12 @@ export function TrackerWorkView(props: {
         </h2>
         {work.goal ? <p className="text-muted-foreground text-sm">{work.goal}</p> : null}
         <TrackerProgressBar progress={work.progress} colour={props.domainColour} />
+        {work.needsReview ? (
+          <TrackerStatusText
+            tone="attention"
+            label={`Record needs review: ${work.needsReview.reasons.join("; ")}`}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {props.actions}
           <Button
@@ -239,76 +247,84 @@ export function TrackerWorkView(props: {
         </div>
       </header>
 
-      <Section title="Now">
-        <ul className="flex flex-col gap-1.5 text-sm">
-          <li>
-            {phase === null ? (
-              work.phases.length === 0 ? (
-                <span className="text-muted-foreground">
-                  A task with no phases. Status: {work.status}.
-                </span>
-              ) : (
-                "Every phase is done."
-              )
-            ) : (
-              <>
-                <span className="font-mono text-muted-foreground text-xs">{phase.id}</span>{" "}
-                {phase.title}
-                <span className="text-muted-foreground"> · {phaseStatusLabel(phase)}</span>
-              </>
-            )}
-          </li>
-          {openCards.map((card) => (
-            <li key={card.id} className="flex items-baseline gap-2">
-              <span className="text-warning-foreground">Decide:</span>
-              <a
-                className="min-w-0 flex-1 underline-offset-4 hover:underline"
-                href={`${hubPage}/decisions`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {card.title}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </Section>
-
-      <Section title="Conversation">
-        <LinkedConversation environmentId={props.environmentId} work={work} />
-        <div>
-          <LaunchAgentButton environmentId={props.environmentId} work={work} />
-        </div>
-      </Section>
-
-      {work.phases.length > 0 ? (
-        <Section title="Roadmap">
-          <ol className="flex flex-col">
-            {work.phases.map((item) => (
-              <li
-                key={item.id}
-                className="flex min-h-9 items-center gap-3 px-2 text-sm odd:bg-muted/40"
-              >
-                <span className="w-8 shrink-0 font-mono text-muted-foreground text-xs">
-                  {item.id}
-                </span>
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    item.status === "done" && "text-muted-foreground line-through",
-                  )}
+      {openCards.length > 0 ? (
+        <Section title="Waiting on You">
+          <ul className="flex flex-col gap-1.5 text-sm">
+            {openCards.map((card) => (
+              <li key={card.id} className="flex items-baseline gap-2">
+                <span className="text-warning-foreground">Decide:</span>
+                <a
+                  className="min-w-0 flex-1 underline-offset-4 hover:underline"
+                  href={`${hubPage}/decisions`}
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  {item.title}
-                </span>
-                <span className="shrink-0 text-muted-foreground text-xs">
-                  {phaseStatusLabel(item)}
-                </span>
-                <span className="hidden w-20 shrink-0 text-right font-mono text-muted-foreground text-xs tabular-nums sm:block">
-                  {item.done ?? item.planned ?? ""}
-                </span>
+                  {card.title}
+                </a>
               </li>
             ))}
+          </ul>
+        </Section>
+      ) : null}
+
+      <Section title="Roadmap">
+        {work.phases.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            A task with no phases. Status: {work.status}.
+          </p>
+        ) : (
+          <ol className="flex flex-col">
+            {work.phases.map((item) => {
+              const isCurrent = item.id === phase?.id;
+              return (
+                <li
+                  key={item.id}
+                  aria-current={isCurrent ? "step" : undefined}
+                  className={cn(
+                    "flex min-h-9 items-center gap-3 rounded-md px-2 py-1.5 text-sm",
+                    isCurrent ? "bg-accent ring-1 ring-primary ring-inset" : "odd:bg-muted/40",
+                  )}
+                >
+                  <span className="w-8 shrink-0 font-mono text-muted-foreground text-xs">
+                    {item.id}
+                  </span>
+                  <span
+                    className={cn(
+                      // Wraps rather than truncates: the roadmap is read at a glance.
+                      "min-w-0 flex-1 text-pretty",
+                      item.status === "done" && "text-muted-foreground line-through",
+                      isCurrent && "font-medium",
+                    )}
+                  >
+                    {item.title}
+                  </span>
+                  {isCurrent ? (
+                    <span className="shrink-0 font-medium text-primary text-xs">Now</span>
+                  ) : null}
+                  <span className="shrink-0 text-muted-foreground text-xs">
+                    {phaseStatusLabel(item)}
+                  </span>
+                  <span className="hidden w-20 shrink-0 text-right font-mono text-muted-foreground text-xs tabular-nums sm:block">
+                    {item.done ?? item.planned ?? ""}
+                  </span>
+                </li>
+              );
+            })}
           </ol>
+        )}
+        {phase === null && work.phases.length > 0 ? (
+          <p className="text-muted-foreground text-sm">Every phase is done.</p>
+        ) : null}
+      </Section>
+
+      {props.agentActions}
+
+      {props.density === "page" ? (
+        <Section title="Conversation">
+          <LinkedConversation environmentId={props.environmentId} work={work} />
+          <div>
+            <LaunchAgentButton environmentId={props.environmentId} work={work} />
+          </div>
         </Section>
       ) : null}
 

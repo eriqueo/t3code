@@ -46,6 +46,7 @@ import {
   CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
+  KanbanSquareIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -74,6 +75,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
+import { useTrackerLinkedWorkTitle } from "../../state/tracker";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
@@ -693,6 +695,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const terminalProcessCount = runningTerminalIds.length;
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
+  const trackerWorkTitle = useTrackerLinkedWorkTitle(thread.environmentId, thread.id);
   const handleDiscardDraftClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1152,6 +1155,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const trackerLinkIndicator =
+    trackerWorkTitle === null ? null : (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label={`Linked to tracker: ${trackerWorkTitle}`}
+              className="inline-flex shrink-0 items-center text-muted-foreground/65"
+            />
+          }
+        >
+          <KanbanSquareIcon aria-hidden className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Tracker: {trackerWorkTitle}</TooltipPopup>
+      </Tooltip>
+    );
+
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
@@ -1277,6 +1298,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
+              {trackerLinkIndicator}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (

@@ -50,6 +50,38 @@ export function useTrackerPortfolio(
   );
 }
 
+const NO_LINKED_WORK = Atom.make<string | null>(null);
+
+/**
+ * The title of the work a conversation is linked to, from the shared portfolio poll.
+ * A string result, so a sidebar row re-renders only when its own link changes.
+ */
+const linkedWorkTitleAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = key.split("\n") as [EnvironmentId, string];
+  return Atom.make((get): string | null => {
+    const portfolio = AsyncResult.getOrElse(
+      get(serverEnvironment.trackerPortfolio({ environmentId, input: {} })),
+      () => null,
+    );
+    const workId = portfolio?.links.find((link) => link.threadId === threadId)?.workId;
+    if (workId === undefined) return null;
+    return portfolio?.works.find((work) => work.id === workId)?.title ?? workId;
+  });
+});
+
+/** Links are reported per host, so only the tracker environment's own threads can show one. */
+export function useTrackerLinkedWorkTitle(
+  environmentId: EnvironmentId,
+  threadId: string,
+): string | null {
+  const trackerEnvironmentId = useTrackerEnvironmentId();
+  return useAtomValue(
+    trackerEnvironmentId === environmentId
+      ? linkedWorkTitleAtom(`${environmentId}\n${threadId}`)
+      : NO_LINKED_WORK,
+  );
+}
+
 export function useTrackerWork(
   environmentId: EnvironmentId | null,
   workId: string | null,

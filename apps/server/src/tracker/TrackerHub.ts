@@ -192,8 +192,19 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
         date: textOrNull(brief.date)?.slice(0, 10) ?? null,
         wrong: list(brief.wrong).map((entry) => text(entry) || text(record(entry).title)),
       })),
+    needsReview: needsReviewFromHub(work.freshness),
     thread: linkedThreadFromHub(record(work.handoff).thread),
   };
+};
+
+/** The hub reports `matched`, `needs_review` or `unknown`; only `needs_review` asks for action. */
+const needsReviewFromHub = (value: unknown): TrackerWorkDetail["needsReview"] => {
+  const freshness = record(value);
+  if (text(freshness.state) !== "needs_review") return null;
+  const labels = list(freshness.reasonLabels)
+    .map(text)
+    .filter((label) => label !== "");
+  return { reasons: labels.length > 0 ? labels : list(freshness.reasons).map(text) };
 };
 
 const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {

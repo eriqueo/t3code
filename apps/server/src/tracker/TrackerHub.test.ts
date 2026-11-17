@@ -151,6 +151,30 @@ describe("TrackerHub", () => {
 
     assert.strictEqual(work?.status, "active");
     assert.strictEqual(work?.briefs[0]?.date, "2026-11-14");
+    assert.strictEqual(work?.needsReview, null);
+  });
+
+  it("flags review only for the hub's needs_review state, with its reason labels", () => {
+    // Shape captured from the live hub record for t3-tracker on 2026-11-17.
+    const stale = {
+      state: "needs_review",
+      label: "record needs review",
+      reasons: ["checkout-head-changed"],
+      reasonLabels: ["checkout revision differs from the handoff"],
+      structuralOnly: true,
+    };
+    const read = (freshness: unknown) =>
+      TrackerHub.workFromHub({ project: "p", freshness }, context)?.needsReview;
+
+    assert.deepStrictEqual(read(stale), {
+      reasons: ["checkout revision differs from the handoff"],
+    });
+    assert.deepStrictEqual(read({ state: "needs_review", reasons: ["missing-handoff"] }), {
+      reasons: ["missing-handoff"],
+    });
+    assert.strictEqual(read({ ...stale, state: "matched" }), null);
+    assert.strictEqual(read({ ...stale, state: "unknown" }), null);
+    assert.strictEqual(read("needs_review"), null);
   });
 
   it.effect("links a thread when the caller saw the current link", () => {

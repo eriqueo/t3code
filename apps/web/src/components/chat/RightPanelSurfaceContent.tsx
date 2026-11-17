@@ -76,6 +76,8 @@ export function RightPanelSurfaceContent(props: {
     image: ComposerImageAttachment | null,
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
+  /** Sends a user message into this conversation, queued behind a running turn. */
+  readonly onSendToConversation: ((text: string) => Promise<void>) | undefined;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
@@ -175,7 +177,14 @@ export function RightPanelSurfaceContent(props: {
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "tracker":
-      return <TrackerPanel threadRef={threadRef} />;
+      return (
+        <TrackerPanel
+          // A link made or a record browsed in one conversation must not carry to the next.
+          key={scopedThreadKey(threadRef)}
+          threadRef={threadRef}
+          onSendToConversation={props.onSendToConversation}
+        />
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

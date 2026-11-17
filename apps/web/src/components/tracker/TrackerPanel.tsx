@@ -8,6 +8,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon } from "lucide-react";
 import { useState } from "react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useThreadShell } from "~/state/entities";
 import { serverEnvironment } from "~/state/server";
 import { errorText, useTrackerPortfolio, useTrackerWork } from "~/state/tracker";
@@ -17,7 +18,14 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
-import { linkedWorkIdForThread, workStatus } from "./tracker.logic";
+import {
+  linkedWorkIdForThread,
+  trackerActionMessage,
+  trackerActions,
+  workStatus,
+  type TrackerAction,
+  type TrackerActionId,
+} from "./tracker.logic";
 import { TrackerStatusText, TrackerWorkView } from "./TrackerWorkView";
 
 export function TrackerHubNotice(props: { error: string; stale: boolean }) {
@@ -91,6 +99,61 @@ function LinkThisConversation(props: {
   );
 }
 
+/** Buttons that ask the agent in this conversation to run a project skill on the linked record. */
+function AgentActions(props: {
+  threadRef: ScopedThreadRef;
+  work: TrackerWorkDetail;
+  onSend: (text: string) => Promise<void>;
+}) {
+  const [sending, setSending] = useState<TrackerActionId | null>(null);
+
+  const send = async (action: TrackerAction) => {
+    if (action.confirm) {
+      const approved = await requestConfirmDialog(
+        `${action.label} ${props.work.title}? The agent runs project-closeout, which closes the record.`,
+        { variant: "destructive" },
+      );
+      if (approved !== true) return;
+    }
+    setSending(action.id);
+    const result = await props
+      .onSend(trackerActionMessage(action.id, props.work.id, props.threadRef.threadId))
+      .then(
+        () => null,
+        (error: unknown) => errorText(error),
+      );
+    setSending(null);
+    if (result === null) {
+      toastManager.add({ type: "success", title: `${action.label} sent to this conversation` });
+    } else {
+      toastManager.add({
+        type: "error",
+        title: `Could not send ${action.label}`,
+        description: result,
+      });
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="border-border border-b pb-1 font-serif text-base">Ask the Agent</h3>
+      <div className="flex flex-wrap gap-2">
+        {trackerActions(props.work).map((action) => (
+          <Button
+            key={action.id}
+            size="sm"
+            variant={action.confirm ? "destructive-outline" : "outline"}
+            disabled={sending !== null}
+            onClick={() => void send(action)}
+          >
+            {sending === action.id ? "Sending…" : action.label}
+          </Button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: string) => void }) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -135,7 +198,11 @@ function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: strin
   );
 }
 
-export function TrackerPanel(props: { threadRef: ScopedThreadRef }) {
+export function TrackerPanel(props: {
+  threadRef: ScopedThreadRef;
+  /** Sends a message into this conversation, queued behind a running turn; absent before the thread starts. */
+  onSendToConversation: ((text: string) => Promise<void>) | undefined;
+}) {
   const { threadRef } = props;
   const environmentId = threadRef.environmentId;
   const navigate = useNavigate();
@@ -176,6 +243,17 @@ export function TrackerPanel(props: { threadRef: ScopedThreadRef }) {
               work={work.value}
               density="panel"
               {...domainOf(portfolio.value, work.value.domain)}
+              agentActions={
+                // Only once the hub itself names this thread: an optimistic or browsed
+                // record must never receive an action meant for the linked one.
+                hubLinkedId === shownId && props.onSendToConversation ? (
+                  <AgentActions
+                    threadRef={threadRef}
+                    work={work.value}
+                    onSend={props.onSendToConversation}
+                  />
+                ) : null
+              }
               actions={
                 <>
                   {linkedId === null ? (
