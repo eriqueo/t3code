@@ -2037,6 +2037,22 @@ export default function ChatView(props: ChatViewProps) {
       )
     : linkedThreadPullRequestKey;
   const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
+  const trackerDefaultOpen =
+    serverConfig?.environment.capabilities.trackerHub === true &&
+    isServerThread &&
+    activeProject !== null &&
+    !prefersPlanSidebarSheet;
+  const trackerDefaultedForRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opens the tracker in the right panel store once per conversation visit on wide layouts, so it is the default side view; a panel already open is left alone.
+  useEffect(() => {
+    if (!trackerDefaultOpen || activeThreadRef === null || activeThreadKey === null) return;
+    if (trackerDefaultedForRef.current === activeThreadKey) return;
+    trackerDefaultedForRef.current = activeThreadKey;
+    const panels = useRightPanelStore.getState();
+    if (!selectThreadRightPanelState(panels.byThreadKey, activeThreadRef).isOpen) {
+      panels.open(activeThreadRef, "tracker");
+    }
+  }, [trackerDefaultOpen, activeThreadRef, activeThreadKey]);
   useProactivePanels({
     threadRef: isServerThread && !embedded ? activeThreadRef : null,
     enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet && !embedded,

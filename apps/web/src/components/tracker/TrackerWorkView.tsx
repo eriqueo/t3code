@@ -327,12 +327,12 @@ export function TrackerWorkView(props: {
                   {isCurrent ? (
                     <span className="shrink-0 font-medium text-primary text-xs">Now</span>
                   ) : null}
-                  <span className="shrink-0 text-muted-foreground text-xs">
-                    {phaseStatusLabel(item)}
-                  </span>
-                  <span className="hidden w-20 shrink-0 text-right font-mono text-muted-foreground text-xs tabular-nums sm:block">
-                    {item.done ?? item.planned ?? ""}
-                  </span>
+                  {/* Strike-through and "Now" carry status; only a wait says something new. */}
+                  {item.status === "waiting" ? (
+                    <span className="shrink-0 text-warning-foreground text-xs">
+                      {phaseStatusLabel(item)}
+                    </span>
+                  ) : null}
                 </li>
               );
             })}

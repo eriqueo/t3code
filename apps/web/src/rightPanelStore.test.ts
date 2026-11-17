@@ -700,7 +700,7 @@ describe("rightPanelStore", () => {
     ).toEqual({
       byThreadKey: {},
       threadPanelVisibilityByThreadKey: {
-        "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
+        "env-1:thread-B": { inlineOpen: true, popoverOpen: false },
       },
     });
   });
@@ -714,7 +714,22 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
+  });
+
+  it("starts the thread details panel closed and remembers one opened on purpose", () => {
+    expect(
+      selectThreadPanelVisibility(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        refA,
+      ),
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
+    useRightPanelStore.getState().setThreadPanelOpen(refA, "inline", true);
+    expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({
+      "env-1:thread-A": { inlineOpen: true, popoverOpen: false },
+    });
+    useRightPanelStore.getState().setThreadPanelOpen(refA, "inline", false);
+    expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({});
   });
 
   it("keeps an open popover visible by promoting it to inline when the real panel closes", () => {
