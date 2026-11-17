@@ -48,6 +48,8 @@ Claude can still ask in **Full access** when its settings disable bypass permiss
 approval for an action. Dangerous-removal safety checks in bypass mode reject the command with
 the original warning. Claude can use a safe rewrite when the warning supplies one; otherwise it
 continues without the removal and tells you what it skipped.
+Use T3 Code's Plan mode when you want Claude to investigate without making changes. In a default
+run, Claude can describe a plan but cannot switch itself into Plan mode and change its permissions.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 

@@ -572,6 +572,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "dontAsk",
+      disallowedTools: ["EnterPlanMode"],
       tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
       allowedTools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
       installPermissionCallback: false,
@@ -599,6 +600,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "dontAsk",
+      disallowedTools: ["EnterPlanMode"],
       tools: ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
       installPermissionCallback: false,
     });
@@ -615,6 +617,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "bypassPermissions",
+      disallowedTools: ["EnterPlanMode"],
       allowDangerouslySkipPermissions: true,
       installPermissionCallback: false,
     });
@@ -633,14 +636,22 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         bypassDisabled: true,
         autoDisabled: false,
       }),
-      { permissionMode: "auto", installPermissionCallback: true },
+      {
+        permissionMode: "auto",
+        disallowedTools: ["EnterPlanMode"],
+        installPermissionCallback: true,
+      },
     );
     assert.deepEqual(
       ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
         bypassDisabled: true,
         autoDisabled: true,
       }),
-      { permissionMode: "default", installPermissionCallback: true },
+      {
+        permissionMode: "default",
+        disallowedTools: ["EnterPlanMode"],
+        installPermissionCallback: true,
+      },
     );
   });
 
@@ -658,8 +669,34 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "default",
+      disallowedTools: ["EnterPlanMode"],
       installPermissionCallback: true,
     });
+  });
+
+  it("preserves launch permissions and user tool denials alongside Default's Plan restriction", () => {
+    const policy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      CLAUDE_TEST_RUNTIME_POLICY,
+    );
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-launch-plan",
+      resume: true,
+      cwd: "/workspace",
+      permissionMode: policy.permissionMode,
+      ...(policy.disallowedTools === undefined ? {} : { disallowedTools: policy.disallowedTools }),
+      settings: {
+        ...DEFAULT_CLAUDE_SETTINGS,
+        launchArgs: "--permission-mode plan --disallowedTools WebFetch",
+      },
+    });
+    assert.equal(options.permissionMode, "plan");
+    assert.deepEqual(options.disallowedTools, ["EnterPlanMode"]);
+    assert.equal(options.extraArgs?.disallowedTools, "WebFetch");
+    assert.notEqual(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey({ ...policy, disallowedTools: [] }, {}),
+    );
   });
 });
 
@@ -5447,11 +5484,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
       runtimeMode: "auto" | "full-access",
       approvalPolicy?: "never",
+      interactionMode: "default" | "plan" = "plan",
     ) {
       const harness = yield* makeWakeHarness;
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode,
-        interactionMode: "plan",
+        interactionMode,
         cwd: "/workspace",
         ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       });
@@ -5466,9 +5504,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       yield* harness.runtime.startTurn({
         ...input,
-        appThread: { ...input.appThread, runtimeMode, interactionMode: "plan" },
+        appThread: { ...input.appThread, runtimeMode, interactionMode },
       });
-      assert.equal(harness.getOpenedOptions()?.permissionMode, "plan");
+      assert.equal(
+        harness.getOpenedOptions()?.permissionMode,
+        interactionMode === "plan" ? "plan" : "bypassPermissions",
+      );
+      assert.deepEqual(
+        harness.getOpenedOptions()?.disallowedTools,
+        interactionMode === "plan" ? undefined : ["EnterPlanMode"],
+      );
       const canUseTool = harness.getOpenedOptions()?.canUseTool;
       assert.isDefined(canUseTool);
       return { ...harness, canUseTool: canUseTool! };
@@ -5496,6 +5541,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       return { first, decision };
     });
+
+    it.effect.each([
+      { initialized: true, mode: "plan", child: false, expected: undefined },
+      { initialized: false, mode: "bypassPermissions", child: false, expected: undefined },
+      { initialized: true, mode: "bypassPermissions", child: true, expected: undefined },
+      { initialized: true, mode: "bypassPermissions", child: false, expected: "provider_check" },
+    ] as const)(
+      "attributes approval only to the initialized requesting mode: $initialized/$mode/$child",
+      ({ initialized, mode, child, expected }) =>
+        Effect.gen(function* () {
+          const turn = yield* openPlanTurn("full-access", undefined, "default");
+          if (initialized) {
+            yield* turn.offerAndWait(
+              claudeSdkFrame({ ...wakeTurnInit, permissionMode: "bypassPermissions" }),
+            );
+          }
+          if (mode === "plan") {
+            yield* turn.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "status",
+                status: null,
+                permissionMode: "plan",
+                uuid: "permission-enter-plan",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          const permission = yield* requestWrite(
+            turn,
+            "Bash",
+            { command: "git status" },
+            child ? { toolUseID: "child-read", agentID: "plan-child" } : undefined,
+          );
+          assert.equal(permission.first.type, "request");
+          if (permission.first.type !== "request") return;
+          const request = permission.first.event.runtimeRequest;
+          const approval = turn.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          );
+          assert.equal(
+            approval?.type === "turn_item.updated" && approval.turnItem.type === "approval_request"
+              ? approval.turnItem.fullAccessOverride
+              : null,
+            expected,
+          );
+          yield* turn.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "decline",
+          });
+          assert.equal((yield* Fiber.join(permission.decision))?.behavior, "deny");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
 
     it.effect.each([
       {
@@ -11398,6 +11507,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 model: "claude-sonnet-4-6",
                 tools: { type: "preset", preset: "claude_code" },
                 permissionMode: "bypassPermissions",
+                disallowedTools: ["EnterPlanMode"],
                 allowDangerouslySkipPermissions: true,
                 settings: { showThinkingSummaries: true },
                 sessionId: WAKE_NATIVE_SESSION,

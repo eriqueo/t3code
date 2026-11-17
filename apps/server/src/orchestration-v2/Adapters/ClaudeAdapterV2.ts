@@ -3303,6 +3303,7 @@ export interface ClaudeRuntimeQueryPolicy {
   readonly permissionMode: PermissionMode;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: true;
   readonly installPermissionCallback: boolean;
 }
@@ -3356,6 +3357,8 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 
   return {
     permissionMode,
+    // T3 owns Plan entry; native entry silently changes permissions mid-turn.
+    disallowedTools: ["EnterPlanMode"],
     ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
     ...(allowedTools === undefined ? {} : { allowedTools }),
     ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
@@ -3467,6 +3470,7 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
     permissionMode: policy.permissionMode,
     tools: policy.tools,
     allowedTools: policy.allowedTools,
+    disallowedTools: policy.disallowedTools,
     allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
     installPermissionCallback: policy.installPermissionCallback,
   });
@@ -4233,7 +4237,7 @@ const CLAUDE_NO_STANDING_GRANT_OPTIONS = [
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 export function claudeApprovalPresentation(input: {
-  readonly permissionMode: PermissionMode;
+  readonly permissionMode: PermissionMode | undefined;
   readonly prompt: string;
   readonly callbackOptions: Pick<
     Parameters<CanUseTool>[2],
@@ -12171,8 +12175,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const liveQuery = yield* Ref.get(queryContext);
           const activePermissionMode =
-            (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
+            liveQuery?.permissionMode ?? context.queryPolicy.permissionMode;
           const safetyReason = NodeUtil.stripVTControlCharacters(
             callbackOptions.decisionReason ?? "",
           ).trim();
@@ -12208,7 +12213,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             requestKind,
             prompt,
             presentation: claudeApprovalPresentation({
-              permissionMode: context.queryPolicy.permissionMode,
+              permissionMode:
+                liveQuery?.receivedInit === true && callbackOptions.agentID === undefined
+                  ? liveQuery.permissionMode
+                  : undefined,
               prompt,
               callbackOptions,
             }),
@@ -12727,6 +12735,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               shouldResume,
             ),
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
+            ...(queryPolicy.disallowedTools === undefined
+              ? {}
+              : { disallowedTools: queryPolicy.disallowedTools }),
             ...(mcpOverrides.allowedTools === undefined
               ? {}
               : { allowedTools: mcpOverrides.allowedTools }),
