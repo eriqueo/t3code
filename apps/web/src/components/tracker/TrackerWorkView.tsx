@@ -96,31 +96,32 @@ function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerW
   const newThread = useNewThreadHandler();
   const [pending, setPending] = useState(false);
 
-  const launch = async (projectId: (typeof projects)[number]["id"]) => {
-    setPending(true);
-    try {
-      const prompt = await readPrompt({
-        environmentId: props.environmentId,
-        input: { workId: props.work.id },
-      });
-      if (prompt._tag !== "Success") {
-        if (!isAtomCommandInterrupted(prompt)) {
-          toastManager.add({
-            type: "error",
-            title: "Could not read the next prompt",
-            description: errorText(squashAtomCommandFailure(prompt)),
-          });
-        }
-        return;
+  const openDraft = async (projectId: (typeof projects)[number]["id"]) => {
+    const prompt = await readPrompt({
+      environmentId: props.environmentId,
+      input: { workId: props.work.id },
+    });
+    if (prompt._tag !== "Success") {
+      if (!isAtomCommandInterrupted(prompt)) {
+        toastManager.add({
+          type: "error",
+          title: "Could not read the next prompt",
+          description: errorText(squashAtomCommandFailure(prompt)),
+        });
       }
-      // Opens a draft only: the agent starts when Eric sends it, with the project,
-      // model and workspace he sees in the composer.
-      await newThread(scopeProjectRef(props.environmentId, projectId), {
-        prompt: prompt.value.text,
-      });
-    } finally {
-      setPending(false);
+      return;
     }
+    // Opens a draft only: the agent starts when Eric sends it, with the project,
+    // model and workspace he sees in the composer.
+    await newThread(scopeProjectRef(props.environmentId, projectId), {
+      prompt: prompt.value.text,
+    });
+  };
+
+  // React Compiler cannot compile try/finally, so the pending flag clears on the promise.
+  const launch = (projectId: (typeof projects)[number]["id"]) => {
+    setPending(true);
+    void openDraft(projectId).finally(() => setPending(false));
   };
 
   return (
@@ -136,7 +137,7 @@ function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerW
       <MenuPopup align="start">
         <MenuGroupLabel>Start a draft in</MenuGroupLabel>
         {projects.map((project) => (
-          <MenuItem key={project.id} onClick={() => void launch(project.id)}>
+          <MenuItem key={project.id} onClick={() => launch(project.id)}>
             {project.title}
           </MenuItem>
         ))}

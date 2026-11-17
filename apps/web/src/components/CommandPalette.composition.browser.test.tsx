@@ -65,6 +65,7 @@ vi.mock("../hooks/useHandleNewThread", () => ({
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
+vi.mock("../state/tracker", () => ({ useTrackerEnvironmentId: () => null }));
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
