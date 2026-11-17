@@ -43,6 +43,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  KanbanSquareIcon,
   MessagesSquare,
   Plus,
   TerminalSquare,
@@ -592,6 +593,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "tracker":
+      return "Tracker";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -684,6 +687,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "tracker":
+      return <KanbanSquareIcon className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":

@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  KanbanSquareIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -14,6 +20,7 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { useTrackerEnvironmentId } from "../../state/tracker";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -226,6 +233,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const trackerEnvironmentId = useTrackerEnvironmentId();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -237,6 +245,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       to: "/pull-requests",
       search: readPullRequestListPreferences(),
     });
+  };
+  const handleTrackerClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/tracker" });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -276,6 +288,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<PullRequestGlyph.pullRequest />}
               label="Pull requests"
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {trackerEnvironmentId !== null ? (
+            <SidebarUtilityItem
+              icon={<KanbanSquareIcon />}
+              label="Tracker"
+              onClick={handleTrackerClick}
             />
           ) : null}
           <SidebarUtilityItem

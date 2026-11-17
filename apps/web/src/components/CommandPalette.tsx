@@ -59,6 +59,7 @@ import {
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  KanbanSquareIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -119,6 +120,7 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesys
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { useTrackerEnvironmentId } from "../state/tracker";
 import { threadEnvironment } from "../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -485,6 +487,7 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
+  const trackerEnvironmentId = useTrackerEnvironmentId();
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1698,6 +1701,19 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (trackerEnvironmentId !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:tracker",
+      searchTerms: ["tracker", "projects", "tasks", "work", "roadmap", "decisions", "hub"],
+      title: "Open tracker",
+      icon: <KanbanSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/tracker" });
+      },
+    });
+  }
 
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";

@@ -358,6 +358,16 @@ import {
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
+  TrackerGetPortfolioInput,
+  TrackerGetWorkInput,
+  TrackerHubError,
+  TrackerLaunchPrompt,
+  TrackerLinkedThread,
+  TrackerLinkThreadInput,
+  TrackerPortfolio,
+  TrackerWorkDetail,
+} from "./tracker.ts";
+import {
   StorageCleanupReport,
   DatabaseReclaimError,
   DatabaseStorageStatus,
@@ -551,6 +561,11 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  trackerGetPortfolio: "tracker.getPortfolio",
+  trackerGetWork: "tracker.getWork",
+  trackerGetLaunchPrompt: "tracker.getLaunchPrompt",
+  trackerLinkThread: "tracker.linkThread",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1020,6 +1035,32 @@ const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
   payload: ServerPrepareTriageInput,
   success: ServerPrepareTriageResult,
   error: Schema.Union([ServerPrepareTriageError, EnvironmentAuthorizationError]),
+});
+
+const trackerRpcError = Schema.Union([EnvironmentAuthorizationError, TrackerHubError]);
+
+const WsTrackerGetPortfolioRpc = Rpc.make(WS_METHODS.trackerGetPortfolio, {
+  payload: TrackerGetPortfolioInput,
+  success: TrackerPortfolio,
+  error: trackerRpcError,
+});
+
+const WsTrackerGetWorkRpc = Rpc.make(WS_METHODS.trackerGetWork, {
+  payload: TrackerGetWorkInput,
+  success: TrackerWorkDetail,
+  error: trackerRpcError,
+});
+
+const WsTrackerGetLaunchPromptRpc = Rpc.make(WS_METHODS.trackerGetLaunchPrompt, {
+  payload: TrackerGetWorkInput,
+  success: TrackerLaunchPrompt,
+  error: trackerRpcError,
+});
+
+const WsTrackerLinkThreadRpc = Rpc.make(WS_METHODS.trackerLinkThread, {
+  payload: TrackerLinkThreadInput,
+  success: TrackerLinkedThread,
+  error: trackerRpcError,
 });
 
 const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
@@ -2170,6 +2211,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
+  WsTrackerGetPortfolioRpc,
+  WsTrackerGetWorkRpc,
+  WsTrackerGetLaunchPromptRpc,
+  WsTrackerLinkThreadRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,

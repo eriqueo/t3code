@@ -1,4 +1,5 @@
 import {
+  KanbanSquareIcon,
   PanelBottomIcon,
   PanelRightIcon,
   SquareMenuIcon,
@@ -33,6 +34,8 @@ export interface PanelLayoutControlsProps {
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
   rightPanelUnavailableLabel?: string;
+  /** Present only where the conversation's environment can reach a tracker hub. */
+  tracker?: { open: boolean; onToggle: () => void };
   onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
   onToggleRightPanel: () => void;
@@ -53,6 +56,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelOpen,
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
+  tracker,
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
@@ -111,6 +115,25 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
               : "Terminal drawer is unavailable"}
           </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {tracker ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={tracker.open}
+              onPressedChange={tracker.onToggle}
+              aria-label="Toggle tracker progress"
+              data-tracker-toggle
+              variant="ghost"
+              size="sm"
+              disabled={!rightPanelAvailable}
+            >
+              <KanbanSquareIcon className="size-4" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Toggle tracker progress</TooltipPopup>
         </Tooltip>
       ) : null}
       {showRightPanelControl ? (

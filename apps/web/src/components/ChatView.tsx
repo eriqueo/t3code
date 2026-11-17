@@ -1076,6 +1076,9 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
+  const toggleTrackerPanelStable = useStableCallback(() => {
+    if (activeThreadRef) useRightPanelStore.getState().toggle(activeThreadRef, "tracker");
+  });
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -3314,6 +3317,14 @@ export default function ChatView(props: ChatViewProps) {
     rightPanelAvailable: activeProject !== null,
     rightPanelOpen,
     rightPanelShortcutLabel: shortcutLabelForCommand(keybindings, "rightPanel.toggle"),
+    ...(serverConfig?.environment.capabilities.trackerHub === true && activeThreadRef
+      ? {
+          tracker: {
+            open: rightPanelOpen && activeRightPanelKind === "tracker",
+            onToggle: toggleTrackerPanelStable,
+          },
+        }
+      : {}),
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,

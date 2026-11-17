@@ -1819,6 +1819,29 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // The hub has no push channel, so a mounted Tracker view polls and an unmounted one stops.
+    trackerPortfolio: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:tracker-portfolio",
+      tag: WS_METHODS.trackerGetPortfolio,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
+    }),
+    trackerWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:tracker-work",
+      tag: WS_METHODS.trackerGetWork,
+      staleTimeMs: 2_000,
+      refreshIntervalMs: 2_000,
+      idleTtlMs: 0,
+    }),
+    trackerLaunchPrompt: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-launch-prompt",
+      tag: WS_METHODS.trackerGetLaunchPrompt,
+    }),
+    trackerLinkThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-link-thread",
+      tag: WS_METHODS.trackerLinkThread,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
