@@ -9,7 +9,6 @@ import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon } from "lucide-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { useThreadShell } from "~/state/entities";
 import { serverEnvironment } from "~/state/server";
 import { errorText, useTrackerPortfolio, useTrackerWork } from "~/state/tracker";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -49,7 +48,6 @@ function LinkThisConversation(props: {
   work: TrackerWorkDetail;
   onLinked: () => void;
 }) {
-  const shell = useThreadShell(props.threadRef);
   const link = useAtomCommand(serverEnvironment.trackerLinkThread, { reportFailure: false });
   const canLink = useAtomValue(
     serverEnvironment.trackerLinkThread.permissionAtom(props.threadRef.environmentId),
@@ -64,7 +62,8 @@ function LinkThisConversation(props: {
       input: {
         workId: props.work.id,
         threadId: props.threadRef.threadId,
-        title: shell?.title ?? "",
+        // TrackerTitleSync renames the conversation to the work's title once linked.
+        title: props.work.title,
         expectedThreadId: current?.threadId ?? null,
       },
     });

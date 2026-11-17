@@ -271,6 +271,7 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { TrackerTitleSync } from "./tracker/TrackerTitleSync";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -3017,6 +3018,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <SidebarFolderDrop>
+      <TrackerTitleSync />
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}

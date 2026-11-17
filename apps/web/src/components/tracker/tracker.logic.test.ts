@@ -5,6 +5,7 @@ import {
   currentPhase,
   domainSections,
   linkedWorkIdForThread,
+  owedThreadTitles,
   progressFraction,
   resumableThreadId,
   trackerActionMessage,
@@ -161,6 +162,29 @@ describe("tracker logic", () => {
     expect(trackerDocUrl("http://hub.test", "a b", "notes/run 1.md")).toBe(
       "http://hub.test/p/a%20b/plan?doc=notes%2Frun%201.md",
     );
+  });
+
+  it("renames a linked conversation to its work's title, and nothing else", () => {
+    const linked = portfolio({
+      works: [work("a", { title: "T3 chats linked to trackers" }), work("b", { title: "Same" })],
+      links: [
+        { workId: "a", threadId: "t1" },
+        { workId: "b", threadId: "t2" },
+        { workId: "a", threadId: "elsewhere" },
+        { workId: "gone", threadId: "t3" },
+      ],
+    });
+    const titles = new Map([
+      ["t1", "Embed Live Project Tracker in T3 Code"],
+      ["t2", "Same"],
+      ["t3", "Untitled"],
+      ["t4", "Unlinked"],
+    ]);
+
+    expect(owedThreadTitles(linked, titles)).toEqual([
+      { threadId: "t1", title: "T3 chats linked to trackers" },
+    ]);
+    expect(owedThreadTitles(null, titles)).toEqual([]);
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {

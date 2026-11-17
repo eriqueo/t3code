@@ -97,6 +97,25 @@ export function trackerDocUrl(hubUrl: string, workId: string, path: string): str
   return `${hubUrl}/p/${encodeURIComponent(workId)}/plan?doc=${encodeURIComponent(path)}`;
 }
 
+/**
+ * A linked conversation carries its work's title, so the thread list and the tracker
+ * name the same thing. Returns the renames still owed; threads this host lacks are skipped.
+ */
+export function owedThreadTitles(
+  portfolio: Pick<TrackerPortfolio, "links" | "works"> | null,
+  threadTitles: ReadonlyMap<string, string>,
+): ReadonlyArray<{ readonly threadId: string; readonly title: string }> {
+  if (portfolio === null) return [];
+  const titleByWork = new Map(portfolio.works.map((work) => [work.id, work.title]));
+  return portfolio.links.flatMap((link) => {
+    const title = titleByWork.get(link.workId)?.trim() ?? "";
+    const current = threadTitles.get(link.threadId);
+    return title === "" || current === undefined || current === title
+      ? []
+      : [{ threadId: link.threadId, title }];
+  });
+}
+
 /** The phase being worked on: one marked active, else the first not yet done. */
 export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase | null {
   return (

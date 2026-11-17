@@ -206,7 +206,6 @@ export function TrackerWorkView(props: {
   });
   const phase = currentPhase(work.phases);
   const openCards = work.cards.filter((card) => card.status === "open");
-  const latestBrief = work.briefs[0] ?? null;
   const hubPage = `${work.hubUrl}/p/${encodeURIComponent(work.id)}`;
 
   return (
@@ -227,7 +226,9 @@ export function TrackerWorkView(props: {
         <h2 className={cn("font-serif", props.density === "page" ? "text-2xl" : "text-lg")}>
           {work.title}
         </h2>
-        {work.goal ? <p className="text-muted-foreground text-sm">{work.goal}</p> : null}
+        {work.goal && props.density === "page" ? (
+          <p className="text-muted-foreground text-sm">{work.goal}</p>
+        ) : null}
         <TrackerProgressBar progress={work.progress} colour={props.domainColour} />
         {work.needsReview ? (
           <TrackerStatusText
@@ -353,10 +354,11 @@ export function TrackerWorkView(props: {
         </Section>
       ) : null}
 
-      {latestBrief ? (
-        <Section title={props.density === "page" ? "Runs" : "Latest Run"}>
+      {/* The sidebar judges progress from the roadmap; the run journal lives on the page. */}
+      {props.density === "page" && work.briefs.length > 0 ? (
+        <Section title="Runs">
           <ul className="flex flex-col gap-3">
-            {(props.density === "page" ? work.briefs.slice(0, 8) : [latestBrief]).map((brief) => (
+            {work.briefs.slice(0, 8).map((brief) => (
               <li key={brief.id} className="flex flex-col gap-0.5 text-sm">
                 <p>
                   {brief.title}
