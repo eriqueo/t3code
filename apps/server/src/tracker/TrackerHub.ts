@@ -154,6 +154,7 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
     id,
     title: text(work.title) || id,
     goal: text(work.goal),
+    tagline: text(work.tagline),
     domain: textOrNull(work.domain),
     kind: textOrNull(work.kind),
     // The hub stores no status on a record that was never parked or closed.

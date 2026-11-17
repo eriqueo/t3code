@@ -153,6 +153,11 @@ describe("TrackerHub", () => {
     assert.strictEqual(work?.briefs[0]?.date, "2026-11-14");
     assert.strictEqual(work?.needsReview, null);
     assert.deepStrictEqual(work?.docs, []);
+    assert.strictEqual(work?.tagline, "");
+    assert.strictEqual(
+      TrackerHub.workFromHub({ project: "p", tagline: "Tracker inside T3" }, context)?.tagline,
+      "Tracker inside T3",
+    );
   });
 
   it("lists the record's documents and drops entries without a path", () => {

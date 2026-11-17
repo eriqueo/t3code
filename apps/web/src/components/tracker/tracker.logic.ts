@@ -116,6 +116,11 @@ export function owedThreadTitles(
   });
 }
 
+/** The sidebar's one line: a tagline when the record has one, else the goal. */
+export function trackerSummary(work: Pick<TrackerWorkDetail, "tagline" | "goal">): string {
+  return work.tagline.trim() || work.goal.trim();
+}
+
 /** The phase being worked on: one marked active, else the first not yet done. */
 export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase | null {
   return (

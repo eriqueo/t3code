@@ -20,11 +20,13 @@ import { buildThreadRouteParams } from "~/threadRoutes";
 import { Button } from "../ui/button";
 import { Menu, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   currentPhase,
   phaseStatusLabel,
   progressFraction,
   trackerDocUrl,
+  trackerSummary,
   resumableThreadId,
   workStatus,
   type TrackerTone,
@@ -84,6 +86,24 @@ function Section(props: { title: string; children: ReactNode }) {
       <h3 className="border-border border-b pb-1 font-serif text-base">{props.title}</h3>
       {props.children}
     </section>
+  );
+}
+
+/** One line under the title in the sidebar: the tagline, else the goal cut to fit; hover shows the goal. */
+function TrackerSummaryLine(props: { work: TrackerWorkDetail }) {
+  const line = trackerSummary(props.work);
+  if (line === "") return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<p className="truncate text-muted-foreground text-sm" data-tracker-summary />}
+      >
+        {line}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom" className="max-w-80">
+        {props.work.goal || line}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -226,9 +246,13 @@ export function TrackerWorkView(props: {
         <h2 className={cn("font-serif", props.density === "page" ? "text-2xl" : "text-lg")}>
           {work.title}
         </h2>
-        {work.goal && props.density === "page" ? (
-          <p className="text-muted-foreground text-sm">{work.goal}</p>
-        ) : null}
+        {props.density === "page" ? (
+          work.goal ? (
+            <p className="text-muted-foreground text-sm">{work.goal}</p>
+          ) : null
+        ) : (
+          <TrackerSummaryLine work={work} />
+        )}
         <TrackerProgressBar progress={work.progress} colour={props.domainColour} />
         {work.needsReview ? (
           <TrackerStatusText

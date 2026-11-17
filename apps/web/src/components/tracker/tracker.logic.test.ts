@@ -11,6 +11,7 @@ import {
   trackerActionMessage,
   trackerActions,
   trackerDocUrl,
+  trackerSummary,
   workStatus,
 } from "./tracker.logic";
 
@@ -185,6 +186,14 @@ describe("tracker logic", () => {
       { threadId: "t1", title: "T3 chats linked to trackers" },
     ]);
     expect(owedThreadTitles(null, titles)).toEqual([]);
+  });
+
+  it("summarises in one line from the tagline, falling back to the goal", () => {
+    expect(trackerSummary({ tagline: "Tracker inside T3", goal: "A long goal." })).toBe(
+      "Tracker inside T3",
+    );
+    expect(trackerSummary({ tagline: "  ", goal: " A long goal. " })).toBe("A long goal.");
+    expect(trackerSummary({ tagline: "", goal: "" })).toBe("");
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {

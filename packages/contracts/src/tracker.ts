@@ -123,6 +123,8 @@ export const TrackerWorkDetail = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   goal: Schema.String,
+  /** The record's one-line summary when it has one; empty otherwise. */
+  tagline: Schema.String,
   domain: Schema.NullOr(Schema.String),
   kind: Schema.NullOr(Schema.String),
   status: Schema.String,
