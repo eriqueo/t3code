@@ -6,7 +6,7 @@ import {
 import type { EnvironmentId, TrackerWorkDetail } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
+import { ArrowUpRightIcon, FileTextIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
@@ -24,6 +24,7 @@ import {
   currentPhase,
   phaseStatusLabel,
   progressFraction,
+  trackerDocUrl,
   resumableThreadId,
   workStatus,
   type TrackerTone,
@@ -246,6 +247,30 @@ export function TrackerWorkView(props: {
           </Button>
         </div>
       </header>
+
+      {work.docs.length > 0 ? (
+        <Section title="Docs">
+          <div className="flex flex-wrap gap-2">
+            {work.docs.map((doc) => (
+              <Button
+                key={doc.path}
+                size="sm"
+                variant="outline"
+                render={
+                  <a
+                    href={trackerDocUrl(work.hubUrl, work.id, doc.path)}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
+              >
+                <FileTextIcon />
+                {doc.label}
+              </Button>
+            ))}
+          </div>
+        </Section>
+      ) : null}
 
       {openCards.length > 0 ? (
         <Section title="Waiting on You">

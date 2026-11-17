@@ -152,6 +152,27 @@ describe("TrackerHub", () => {
     assert.strictEqual(work?.status, "active");
     assert.strictEqual(work?.briefs[0]?.date, "2026-11-14");
     assert.strictEqual(work?.needsReview, null);
+    assert.deepStrictEqual(work?.docs, []);
+  });
+
+  it("lists the record's documents and drops entries without a path", () => {
+    const work = TrackerHub.workFromHub(
+      {
+        project: "p",
+        docs: [
+          { label: "Living Plan", path: "plan.md" },
+          { path: "lane-map.html" },
+          { label: "No path" },
+          "stray",
+        ],
+      },
+      context,
+    );
+
+    assert.deepStrictEqual(work?.docs, [
+      { label: "Living Plan", path: "plan.md" },
+      { label: "lane-map.html", path: "lane-map.html" },
+    ]);
   });
 
   it("flags review only for the hub's needs_review state, with its reason labels", () => {

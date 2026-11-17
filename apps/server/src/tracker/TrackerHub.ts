@@ -192,6 +192,10 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
         date: textOrNull(brief.date)?.slice(0, 10) ?? null,
         wrong: list(brief.wrong).map((entry) => text(entry) || text(record(entry).title)),
       })),
+    docs: list(work.docs)
+      .map(record)
+      .map((doc) => ({ label: text(doc.label) || text(doc.path), path: text(doc.path) }))
+      .filter((doc) => doc.path !== ""),
     needsReview: needsReviewFromHub(work.freshness),
     thread: linkedThreadFromHub(record(work.handoff).thread),
   };

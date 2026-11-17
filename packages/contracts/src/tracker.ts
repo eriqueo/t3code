@@ -133,6 +133,8 @@ export const TrackerWorkDetail = Schema.Struct({
   phases: Schema.Array(TrackerPhase),
   cards: Schema.Array(TrackerCard),
   briefs: Schema.Array(TrackerBrief),
+  /** Documents the record lists, as paths inside the hub's project folder. */
+  docs: Schema.Array(Schema.Struct({ label: Schema.String, path: Schema.String })),
   /** Set when the hub judges the record stale against its inputs; holds the hub's reasons. */
   needsReview: Schema.NullOr(Schema.Struct({ reasons: Schema.Array(Schema.String) })),
   /** The one conversation the hub delivers Eric's decisions to. */

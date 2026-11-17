@@ -92,6 +92,11 @@ export function progressFraction(progress: TrackerProgress): number | null {
   return Math.min(1, Math.max(0, progress.done / progress.total));
 }
 
+/** The hub's own document view, which renders Markdown and serves HTML, PDFs and images. */
+export function trackerDocUrl(hubUrl: string, workId: string, path: string): string {
+  return `${hubUrl}/p/${encodeURIComponent(workId)}/plan?doc=${encodeURIComponent(path)}`;
+}
+
 /** The phase being worked on: one marked active, else the first not yet done. */
 export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase | null {
   return (

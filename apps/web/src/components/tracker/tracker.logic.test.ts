@@ -9,6 +9,7 @@ import {
   resumableThreadId,
   trackerActionMessage,
   trackerActions,
+  trackerDocUrl,
   workStatus,
 } from "./tracker.logic";
 
@@ -151,6 +152,15 @@ describe("tracker logic", () => {
         .filter((action) => action.confirm)
         .map((action) => action.id),
     ).toEqual(["close-out"]);
+  });
+
+  it("opens a document in the hub's own viewer, escaping the record and path", () => {
+    expect(trackerDocUrl("http://hub.test", "t3-tracker", "plan.md")).toBe(
+      "http://hub.test/p/t3-tracker/plan?doc=plan.md",
+    );
+    expect(trackerDocUrl("http://hub.test", "a b", "notes/run 1.md")).toBe(
+      "http://hub.test/p/a%20b/plan?doc=notes%2Frun%201.md",
+    );
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {
