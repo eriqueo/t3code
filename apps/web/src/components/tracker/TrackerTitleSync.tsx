@@ -1,22 +1,29 @@
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
 import { useThreadShells } from "~/state/entities";
 import { readEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
-import { useTrackerEnvironmentId, useTrackerPortfolio } from "~/state/tracker";
+import { useTrackerEnvironmentIds, useTrackerPortfolio } from "~/state/tracker";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
 import { owedThreadTitles } from "./tracker.logic";
 
-/**
- * Renames each linked conversation on this host to its work's title. Mounted once with
- * the sidebar; each rename is tried once per title, so a refused rename cannot loop.
- */
+/** Mounted once with the sidebar: one title sync per machine that can reach the hub. */
 export function TrackerTitleSync() {
-  const environmentId = useTrackerEnvironmentId();
+  const environmentIds = useTrackerEnvironmentIds();
+  return environmentIds.map((environmentId) => (
+    <EnvironmentTitleSync key={environmentId} environmentId={environmentId} />
+  ));
+}
+
+/**
+ * Renames each linked conversation on one machine to its work's title; that machine's
+ * server reports its own links. Each rename is tried once per title, so a refused one cannot loop.
+ */
+function EnvironmentTitleSync({ environmentId }: { environmentId: EnvironmentId }) {
   const portfolio = useTrackerPortfolio(environmentId).value;
-  const threads = useThreadShells(environmentId !== null);
+  const threads = useThreadShells();
   const updateMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -24,7 +31,7 @@ export function TrackerTitleSync() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps server-held thread titles in step with the hub's work titles, which change outside this app (agents rename records and link threads from the hub).
   useEffect(() => {
-    if (environmentId === null || portfolio === null) return;
+    if (portfolio === null) return;
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     const titles = new Map(
       threads

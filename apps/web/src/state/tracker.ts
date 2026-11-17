@@ -3,7 +3,7 @@ import type { EnvironmentId, TrackerPortfolio, TrackerWorkDetail } from "@t3tool
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { primaryServerConfigAtom, serverEnvironment } from "./server";
+import { environmentServerConfigsAtom, primaryServerConfigAtom, serverEnvironment } from "./server";
 
 export interface TrackerRead<A> {
   readonly value: A | null;
@@ -50,8 +50,6 @@ export function useTrackerPortfolio(
   );
 }
 
-const NO_LINKED_WORK = Atom.make<string | null>(null);
-
 /**
  * The title of the work a conversation is linked to, from the shared portfolio poll.
  * A string result, so a sidebar row re-renders only when its own link changes.
@@ -59,6 +57,13 @@ const NO_LINKED_WORK = Atom.make<string | null>(null);
 const linkedWorkTitleAtom = Atom.family((key: string) => {
   const [environmentId, threadId] = key.split("\n") as [EnvironmentId, string];
   return Atom.make((get): string | null => {
+    // Each machine's server reports its own host's links, so a remote thread asks its own server.
+    if (
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities.trackerHub !==
+      true
+    ) {
+      return null;
+    }
     const portfolio = AsyncResult.getOrElse(
       get(serverEnvironment.trackerPortfolio({ environmentId, input: {} })),
       () => null,
@@ -69,17 +74,27 @@ const linkedWorkTitleAtom = Atom.family((key: string) => {
   });
 });
 
-/** Links are reported per host, so only the tracker environment's own threads can show one. */
+/** The linked work's title for a thread on any machine whose server can reach the hub. */
 export function useTrackerLinkedWorkTitle(
   environmentId: EnvironmentId,
   threadId: string,
 ): string | null {
-  const trackerEnvironmentId = useTrackerEnvironmentId();
-  return useAtomValue(
-    trackerEnvironmentId === environmentId
-      ? linkedWorkTitleAtom(`${environmentId}\n${threadId}`)
-      : NO_LINKED_WORK,
-  );
+  return useAtomValue(linkedWorkTitleAtom(`${environmentId}\n${threadId}`));
+}
+
+/** Every connected machine whose server can reach a tracker hub. */
+// A joined key, so a config push that changes nothing tracker-related renders nothing.
+const trackerEnvironmentIdsKeyAtom = Atom.make((get): string => {
+  const ids: Array<EnvironmentId> = [];
+  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+    if (config.environment.capabilities.trackerHub === true) ids.push(environmentId);
+  }
+  return ids.join("\n");
+});
+
+export function useTrackerEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+  const key = useAtomValue(trackerEnvironmentIdsKeyAtom);
+  return key === "" ? [] : (key.split("\n") as Array<EnvironmentId>);
 }
 
 export function useTrackerWork(
