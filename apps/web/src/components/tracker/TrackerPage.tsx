@@ -42,7 +42,7 @@ function WaitingOnYou(props: { portfolio: TrackerPortfolio; onOpen: (workId: str
               key={item.key}
               className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-sm sm:min-h-9"
             >
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 basis-full sm:basis-0">
                 {item.title}
                 <span className="text-muted-foreground"> · {item.workTitle}</span>
               </span>
@@ -209,9 +209,6 @@ export function TrackerPage() {
                 {portfolio.value ? (
                   <span className="text-muted-foreground text-sm">
                     {portfolio.value.works.filter((work) => work.status === "active").length} live
-                    {portfolio.value.liveCap === null
-                      ? ""
-                      : ` · ${portfolio.value.liveProjects} of ${portfolio.value.liveCap} project slots`}
                   </span>
                 ) : null}
               </header>

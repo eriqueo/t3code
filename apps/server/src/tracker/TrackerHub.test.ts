@@ -139,6 +139,20 @@ describe("TrackerHub", () => {
     assert.strictEqual(TrackerHub.workFromHub({ error: "not-found" }, context), null);
   });
 
+  it("reads a never-transitioned task as active and dates a brief by its day", () => {
+    const work = TrackerHub.workFromHub(
+      {
+        project: "task",
+        kind: "task",
+        briefs: [{ id: "run-1", date: "2026-11-14T05:35:04.165862+00:00" }],
+      },
+      context,
+    );
+
+    assert.strictEqual(work?.status, "active");
+    assert.strictEqual(work?.briefs[0]?.date, "2026-11-14");
+  });
+
   it.effect("links a thread when the caller saw the current link", () => {
     const hub = hubWith({
       "GET /api/projects/t3-tracker": () => Response.json(project(null)),

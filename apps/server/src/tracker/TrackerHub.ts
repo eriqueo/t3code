@@ -156,7 +156,8 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
     goal: text(work.goal),
     domain: textOrNull(work.domain),
     kind: textOrNull(work.kind),
-    status: text(work.status),
+    // The hub stores no status on a record that was never parked or closed.
+    status: text(work.status) || "active",
     updated: textOrNull(work.updated),
     lastWork: textOrNull(clock.lastWork),
     waitingOnYou:
@@ -187,7 +188,8 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
         kind: text(brief.kind),
         title: text(brief.title),
         summary: text(brief.summary),
-        date: textOrNull(brief.date),
+        // Older briefs carry a full timestamp; the day is what the views show.
+        date: textOrNull(brief.date)?.slice(0, 10) ?? null,
         wrong: list(brief.wrong).map((entry) => text(entry) || text(record(entry).title)),
       })),
     thread: linkedThreadFromHub(record(work.handoff).thread),
