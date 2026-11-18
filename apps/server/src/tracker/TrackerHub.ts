@@ -1,5 +1,9 @@
 import {
   TrackerHubError,
+  type TrackerAnswerCardInput,
+  type TrackerCard,
+  type TrackerCardSeen,
+  type TrackerDoneDecidingInput,
   type TrackerGetWorkInput,
   type TrackerLaunchPrompt,
   type TrackerLinkedThread,
@@ -33,6 +37,14 @@ export class TrackerHub extends Context.Service<
     readonly linkThread: (
       input: TrackerLinkThreadInput,
     ) => Effect.Effect<TrackerLinkedThread, TrackerHubError>;
+    /** Saves Eric's answer on one card, as the hub's own page does. */
+    readonly answerCard: (
+      input: TrackerAnswerCardInput,
+    ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
+    /** Eric's "Done deciding": the hub queues his answers for the linked conversation. */
+    readonly doneDeciding: (
+      input: TrackerDoneDecidingInput,
+    ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
   }
 >()("t3/tracker/TrackerHub") {}
 
@@ -181,6 +193,16 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
       title: text(card.title),
       ask: text(card.ask),
       status: text(card.status),
+      phase: text(card.phase),
+      context: text(card.context),
+      plan: text(card.plan),
+      risk: text(card.risk),
+      recommend: text(card.recommend),
+      decidedAt: textOrNull(card.decidedAt),
+      comments: list(card.comments)
+        .map(record)
+        .map((comment) => ({ at: textOrNull(comment.at), text: text(comment.text) })),
+      answerable: !card.bulk && !card.review,
     })),
     briefs: list(work.briefs)
       .map(record)
@@ -199,7 +221,50 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
       .filter((doc) => doc.path !== ""),
     needsReview: needsReviewFromHub(work.freshness),
     thread: linkedThreadFromHub(record(work.handoff).thread),
+    handoff: handoffFromHub(work.handoff),
   };
+};
+
+/** The hub's delivery record for Done deciding, as the hub page words its states. */
+const handoffFromHub = (value: unknown): TrackerWorkDetail["handoff"] => {
+  const handoff = record(value);
+  const delivery = record(handoff.delivery);
+  const state = text(delivery.state);
+  return {
+    waiting: handoff.waiting === true,
+    at: textOrNull(handoff.at),
+    delivery:
+      handoff.delivery === null || handoff.delivery === undefined
+        ? null
+        : state === "pending" || state === "stale"
+          ? state
+          : delivery.ok === true
+            ? "sent"
+            : "failed",
+    reason: textOrNull(delivery.reason),
+  };
+};
+
+/** The card as Eric last read it, compared on what an answer depends on. */
+const cardSeen = (card: TrackerCard): TrackerCardSeen => ({
+  id: card.id,
+  status: card.status,
+  title: card.title,
+  ask: card.ask,
+  comments: card.comments.length,
+});
+
+const sameSeen = (left: TrackerCardSeen, right: TrackerCardSeen) =>
+  left.id === right.id &&
+  left.status === right.status &&
+  left.title === right.title &&
+  left.ask === right.ask &&
+  left.comments === right.comments;
+
+/** The hub's refusal, in its own words when it gave them. */
+const hubRefusal = (body: unknown): { code: string; detail: string } => {
+  const error = record(record(body).error);
+  return { code: text(error.code), detail: text(error.detail) || text(error.code) };
 };
 
 /** The hub reports `matched`, `needs_review` or `unknown`; only `needs_review` asks for action. */
@@ -283,6 +348,93 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
     return detail;
   });
 
+  // A POST that may have reached the hub is never retried blindly: the caller reloads.
+  const post = (path: string, body: unknown) =>
+    client
+      .execute(
+        HttpClientRequest.post(`${hubUrl}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new TrackerHubError({
+              reason: "unreachable",
+              detail: `Could not reach the tracker hub at ${hubUrl}. Reload to see whether it was saved.`,
+            }),
+        ),
+        Effect.flatMap((response) =>
+          response.json.pipe(
+            Effect.orElseSucceed(() => null),
+            Effect.map((json) => ({ ok: response.status >= 200 && response.status < 300, json })),
+          ),
+        ),
+        Effect.timeoutOrElse({
+          duration: HUB_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new TrackerHubError({
+                reason: "unreachable",
+                detail: `The tracker hub at ${hubUrl} took too long to answer. Reload to see whether it was saved.`,
+              }),
+            ),
+        }),
+        Effect.scoped,
+      );
+
+  /**
+   * One human write guarded twice, as the Herdr pane does: the cards must still read as Eric
+   * saw them, and the hub refuses a revision that moved. A move that leaves his cards alone
+   * is retried once on the new revision.
+   */
+  const humanWrite = Effect.fn("TrackerHub.humanWrite")(function* (
+    workId: string,
+    seen: ReadonlyArray<TrackerCardSeen>,
+    /** Done deciding covers every card, so one Eric never saw also refuses it. */
+    everyCard: boolean,
+    path: string,
+    body: Record<string, unknown>,
+  ) {
+    for (let attempt = 0; ; attempt += 1) {
+      const revision = text(
+        record(yield* json(`/api/v1/projects/${encodeURIComponent(workId)}`)).revision,
+      );
+      const fresh = yield* work({ workId });
+      const unseen = everyCard
+        ? fresh.cards.find((card) => !seen.some((entry) => entry.id === card.id))
+        : undefined;
+      if (unseen !== undefined) {
+        return yield* new TrackerHubError({
+          reason: "cardChanged",
+          detail: `A new decision arrived: ${unseen.title || unseen.id}. Look at it before Done deciding.`,
+        });
+      }
+      for (const card of seen) {
+        const now = fresh.cards.find((entry) => entry.id === card.id);
+        if (now === undefined || !sameSeen(cardSeen(now), card)) {
+          return yield* new TrackerHubError({
+            reason: "cardChanged",
+            detail: `${card.title || card.id} changed while you read it. Read it again; your text is kept.`,
+          });
+        }
+      }
+      const reply = yield* post(path, {
+        schemaVersion: 1,
+        expectedRevision: revision,
+        ...body,
+      });
+      if (reply.ok) return yield* work({ workId });
+      const refusal = hubRefusal(reply.json);
+      if (refusal.code === "stale-revision" && attempt === 0) continue;
+      return yield* new TrackerHubError({
+        reason: refusal.code === "stale-revision" ? "cardChanged" : "refused",
+        detail:
+          refusal.code === "stale-revision"
+            ? "The project keeps changing. Try again."
+            : `The tracker hub did not save it: ${refusal.detail || "no reason given"}.`,
+      });
+    }
+  });
+
   return TrackerHub.of({
     portfolio: Effect.all(
       {
@@ -342,6 +494,27 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
       }
       return linked;
     }),
+    answerCard: Effect.fn("TrackerHub.answerCard")((input) =>
+      humanWrite(
+        input.workId,
+        [input.card],
+        false,
+        `/api/v1/projects/${encodeURIComponent(input.workId)}/cards/${encodeURIComponent(input.card.id)}/answer`,
+        {
+          ...(input.status === null ? {} : { status: input.status }),
+          ...(input.comment.trim() === "" ? {} : { comment: input.comment }),
+        },
+      ),
+    ),
+    doneDeciding: Effect.fn("TrackerHub.doneDeciding")((input) =>
+      humanWrite(
+        input.workId,
+        input.cards,
+        true,
+        `/api/v1/projects/${encodeURIComponent(input.workId)}/handoff`,
+        {},
+      ),
+    ),
   });
 });
 

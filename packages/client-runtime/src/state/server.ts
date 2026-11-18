@@ -1842,6 +1842,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:tracker-link-thread",
       tag: WS_METHODS.trackerLinkThread,
     }),
+    trackerAnswerCard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-answer-card",
+      tag: WS_METHODS.trackerAnswerCard,
+    }),
+    trackerDoneDeciding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-done-deciding",
+      tag: WS_METHODS.trackerDoneDeciding,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

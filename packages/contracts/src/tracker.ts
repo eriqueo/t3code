@@ -89,12 +89,27 @@ export const TrackerPhase = Schema.Struct({
 });
 export type TrackerPhase = typeof TrackerPhase.Type;
 
+export const TrackerCardComment = Schema.Struct({
+  at: Schema.NullOr(Schema.String),
+  text: Schema.String,
+});
+export type TrackerCardComment = typeof TrackerCardComment.Type;
+
 export const TrackerCard = Schema.Struct({
   id: Schema.String,
   kind: Schema.String,
   title: Schema.String,
   ask: Schema.String,
   status: Schema.String,
+  phase: Schema.String,
+  context: Schema.String,
+  plan: Schema.String,
+  risk: Schema.String,
+  recommend: Schema.String,
+  decidedAt: Schema.NullOr(Schema.String),
+  comments: Schema.Array(TrackerCardComment),
+  /** False for bulk and review cards: their forms live on the hub's own page. */
+  answerable: Schema.Boolean,
 });
 export type TrackerCard = typeof TrackerCard.Type;
 
@@ -115,6 +130,16 @@ export const TrackerLinkedThread = Schema.Struct({
   linkedAt: Schema.NullOr(Schema.String),
 });
 export type TrackerLinkedThread = typeof TrackerLinkedThread.Type;
+
+export const TrackerHandoffState = Schema.Struct({
+  /** Done deciding was pressed and the agent has not picked the answers up yet. */
+  waiting: Schema.Boolean,
+  at: Schema.NullOr(Schema.String),
+  /** "pending" or "stale" while the relay works; "sent" or "failed" once it reports. */
+  delivery: Schema.NullOr(Schema.Literals(["pending", "stale", "sent", "failed"])),
+  reason: Schema.NullOr(Schema.String),
+});
+export type TrackerHandoffState = typeof TrackerHandoffState.Type;
 
 export const TrackerWorkDetail = Schema.Struct({
   host: Schema.String,
@@ -141,6 +166,8 @@ export const TrackerWorkDetail = Schema.Struct({
   needsReview: Schema.NullOr(Schema.Struct({ reasons: Schema.Array(Schema.String) })),
   /** The one conversation the hub delivers Eric's decisions to. */
   thread: Schema.NullOr(TrackerLinkedThread),
+  /** Eric's last "Done deciding" and how its delivery went. */
+  handoff: TrackerHandoffState,
 });
 export type TrackerWorkDetail = typeof TrackerWorkDetail.Type;
 
@@ -165,8 +192,41 @@ export const TrackerLinkThreadInput = Schema.Struct({
 });
 export type TrackerLinkThreadInput = typeof TrackerLinkThreadInput.Type;
 
+/** What Eric read on a card; the hub write is refused when the card has moved on. */
+export const TrackerCardSeen = Schema.Struct({
+  id: Schema.String,
+  status: Schema.String,
+  title: Schema.String,
+  ask: Schema.String,
+  comments: Schema.Number,
+});
+export type TrackerCardSeen = typeof TrackerCardSeen.Type;
+
+export const TrackerAnswerCardInput = Schema.Struct({
+  workId: TrackerWorkId,
+  card: TrackerCardSeen,
+  /** null keeps the status (a comment only); a question ignores it. */
+  status: Schema.NullOr(Schema.Literals(["open", "approved", "rejected"])),
+  comment: Schema.String,
+});
+export type TrackerAnswerCardInput = typeof TrackerAnswerCardInput.Type;
+
+export const TrackerDoneDecidingInput = Schema.Struct({
+  workId: TrackerWorkId,
+  /** Every card Eric saw; Done deciding is refused when any of them changed. */
+  cards: Schema.Array(TrackerCardSeen),
+});
+export type TrackerDoneDecidingInput = typeof TrackerDoneDecidingInput.Type;
+
 export class TrackerHubError extends Schema.TaggedError<TrackerHubError>()("TrackerHubError", {
-  reason: Schema.Literals(["unreachable", "refused", "notFound", "invalidResponse", "linkChanged"]),
+  reason: Schema.Literals([
+    "unreachable",
+    "refused",
+    "notFound",
+    "invalidResponse",
+    "linkChanged",
+    "cardChanged",
+  ]),
   detail: TrimmedNonEmptyString,
 }) {
   override get message(): string {

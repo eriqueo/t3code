@@ -2,7 +2,10 @@ import type { TrackerPortfolio, TrackerWorkSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  cardStatusLabel,
   currentPhase,
+  decisionCards,
+  doneDecidingText,
   domainSections,
   linkedWorkIdForThread,
   owedThreadTitles,
@@ -11,7 +14,9 @@ import {
   trackerActionMessage,
   trackerActions,
   trackerDocUrl,
+  trackerCardSeen,
   trackerSummary,
+  trackerWhen,
   workStatus,
 } from "./tracker.logic";
 
@@ -194,6 +199,66 @@ describe("tracker logic", () => {
     );
     expect(trackerSummary({ tagline: "  ", goal: " A long goal. " })).toBe("A long goal.");
     expect(trackerSummary({ tagline: "", goal: "" })).toBe("");
+  });
+
+  const card = (id: string, status: string) => ({
+    id,
+    kind: "decision",
+    title: id,
+    ask: "Ask",
+    status,
+    phase: "",
+    context: "",
+    plan: "",
+    risk: "",
+    recommend: "",
+    decidedAt: null,
+    comments: [{ at: null, text: "x" }],
+    answerable: true,
+  });
+
+  it("splits cards into waiting and answered, leaving finished ones out", () => {
+    const { open, decided } = decisionCards([
+      card("a", "open"),
+      card("b", "approved"),
+      card("c", "answered"),
+      card("d", "done"),
+      card("e", "expired"),
+    ]);
+
+    expect(open.map((entry) => entry.id)).toEqual(["a"]);
+    expect(decided.map((entry) => entry.id)).toEqual(["b", "c"]);
+    expect(cardStatusLabel(card("a", "open"))).toBe("Waiting on you");
+    expect(trackerCardSeen(card("b", "approved"))).toEqual({
+      id: "b",
+      status: "approved",
+      title: "b",
+      ask: "Ask",
+      comments: 1,
+    });
+  });
+
+  it("words Done deciding by where the answers are", () => {
+    const thread = { host: "hwc-laptop", threadId: "t1", title: "Chat", linkedAt: null };
+    const handoff = { waiting: false, at: null, delivery: null, reason: null } as const;
+
+    expect(doneDecidingText({ thread, handoff })).toBe(
+      "Send your saved answers to Chat on hwc-laptop.",
+    );
+    expect(doneDecidingText({ thread: null, handoff })).toContain("the hub starts one");
+    expect(
+      doneDecidingText({
+        thread,
+        handoff: { waiting: true, at: "2026-11-18T10:01", delivery: "pending", reason: null },
+      }),
+    ).toBe("Recorded 2026-11-18 10:01; waiting for hwc-laptop to post it.");
+    expect(
+      doneDecidingText({
+        thread,
+        handoff: { waiting: true, at: null, delivery: "failed", reason: "no relay" },
+      }),
+    ).toBe("Saved, but not sent: no relay.");
+    expect(trackerWhen("2026-11-18T10:01:33-07:00")).toBe("2026-11-18 10:01");
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {

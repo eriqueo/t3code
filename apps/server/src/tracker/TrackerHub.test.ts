@@ -252,6 +252,153 @@ describe("TrackerHub", () => {
     }).pipe(Effect.provide(hub.layer));
   });
 
+  it("reads a card's detail and the delivery of Done deciding", () => {
+    const work = TrackerHub.workFromHub(
+      {
+        ...project(null),
+        cards: [
+          {
+            id: "c1",
+            kind: "decision",
+            title: "Ship it",
+            ask: "Release now?",
+            status: "approved",
+            context: "Why",
+            plan: "Then",
+            risk: "Low",
+            recommend: "Yes",
+            decidedAt: "2026-11-18T10:00",
+            comments: [{ at: "2026-11-18T10:00", text: "go" }],
+          },
+          { id: "c2", kind: "question", title: "Bulk", ask: "Each", status: "open", bulk: {} },
+        ],
+        handoff: { waiting: true, at: "2026-11-18T10:01", delivery: { state: "pending" } },
+      },
+      context,
+    );
+
+    assert.deepStrictEqual(work?.cards[0]?.comments, [{ at: "2026-11-18T10:00", text: "go" }]);
+    assert.strictEqual(work?.cards[0]?.answerable, true);
+    assert.strictEqual(work?.cards[1]?.answerable, false);
+    assert.deepStrictEqual(work?.handoff, {
+      waiting: true,
+      at: "2026-11-18T10:01",
+      delivery: "pending",
+      reason: null,
+    });
+    const read = (delivery: unknown) =>
+      TrackerHub.workFromHub({ project: "p", handoff: { waiting: true, delivery } }, context)
+        ?.handoff.delivery;
+    assert.strictEqual(read({ ok: true }), "sent");
+    assert.strictEqual(read({ ok: false, reason: "no relay" }), "failed");
+    assert.strictEqual(read(null), null);
+  });
+
+  const seenLayout = { id: "1", status: "open", title: "Layout", ask: "Choose", comments: 0 };
+
+  it.effect("answers a card on the hub's current revision", () => {
+    const hub = hubWith({
+      "GET /api/v1/projects/t3-tracker": () => Response.json({ revision: "rev-1" }),
+      "GET /api/projects/t3-tracker": () => Response.json(project(null)),
+      "POST /api/v1/projects/t3-tracker/cards/1/answer": () => Response.json({ schemaVersion: 1 }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      yield* tracker.answerCard({
+        workId: "t3-tracker",
+        card: seenLayout,
+        status: "approved",
+        comment: "Use the sidebar",
+      });
+
+      const write = hub.sent.find((request) => request.method === "POST");
+      assert.strictEqual(write?.url, "/api/v1/projects/t3-tracker/cards/1/answer");
+      assert.deepStrictEqual(write?.body, {
+        schemaVersion: 1,
+        expectedRevision: "rev-1",
+        status: "approved",
+        comment: "Use the sidebar",
+      });
+    }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("refuses an answer to a card that changed after Eric read it", () => {
+    const hub = hubWith({
+      "GET /api/v1/projects/t3-tracker": () => Response.json({ revision: "rev-1" }),
+      "GET /api/projects/t3-tracker": () => Response.json(project(null)),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      const error = yield* Effect.flip(
+        tracker.answerCard({
+          workId: "t3-tracker",
+          card: { ...seenLayout, ask: "Choose one" },
+          status: "approved",
+          comment: "",
+        }),
+      );
+
+      assert.strictEqual(error.reason, "cardChanged");
+      assert.isFalse(hub.sent.some((request) => request.method === "POST"));
+    }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("retries once on a moved revision, then reports the hub's own reason", () => {
+    let answers = 0;
+    const hub = hubWith({
+      "GET /api/v1/projects/t3-tracker": () => Response.json({ revision: `rev-${answers}` }),
+      "GET /api/projects/t3-tracker": () => Response.json(project(null)),
+      "POST /api/v1/projects/t3-tracker/cards/1/answer": () => {
+        answers += 1;
+        return answers === 1
+          ? Response.json({ error: { code: "stale-revision" } }, { status: 409 })
+          : Response.json(
+              { error: { code: "question-needs-answer", detail: "a question needs an answer" } },
+              { status: 400 },
+            );
+      },
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      const error = yield* Effect.flip(
+        tracker.answerCard({ workId: "t3-tracker", card: seenLayout, status: null, comment: "" }),
+      );
+
+      const writes = hub.sent.filter((request) => request.method === "POST");
+      assert.deepStrictEqual(
+        writes.map((request) => (request.body as { expectedRevision: string }).expectedRevision),
+        ["rev-0", "rev-1"],
+      );
+      assert.strictEqual(error.reason, "refused");
+      assert.include(error.detail, "a question needs an answer");
+    }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("refuses Done deciding while a card Eric never saw is waiting", () => {
+    const hub = hubWith({
+      "GET /api/v1/projects/t3-tracker": () => Response.json({ revision: "rev-1" }),
+      "GET /api/projects/t3-tracker": () => Response.json(project(null)),
+      "POST /api/v1/projects/t3-tracker/handoff": () => Response.json({ schemaVersion: 1 }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      const error = yield* Effect.flip(
+        tracker.doneDeciding({ workId: "t3-tracker", cards: [seenLayout] }),
+      );
+      assert.strictEqual(error.reason, "cardChanged");
+
+      yield* tracker.doneDeciding({
+        workId: "t3-tracker",
+        cards: [seenLayout, { id: "2", status: "done", title: "Old", ask: "Chosen", comments: 0 }],
+      });
+      const writes = hub.sent.filter((request) => request.method === "POST");
+      assert.deepStrictEqual(
+        writes.map((request) => request.body),
+        [{ schemaVersion: 1, expectedRevision: "rev-1" }],
+      );
+    }).pipe(Effect.provide(hub.layer));
+  });
+
   it.effect("reports a missing record as not found", () => {
     const hub = hubWith({});
     return Effect.gen(function* () {

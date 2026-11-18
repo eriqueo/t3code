@@ -49,6 +49,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   // Relinking moves where the hub delivers decisions, so it needs the scope that directs agents.
   [WS_METHODS.trackerLinkThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.trackerAnswerCard]: AuthOrchestrationOperateScope,
+  [WS_METHODS.trackerDoneDeciding]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,

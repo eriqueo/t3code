@@ -1,4 +1,6 @@
 import type {
+  TrackerCard,
+  TrackerCardSeen,
   TrackerPhase,
   TrackerPortfolio,
   TrackerProgress,
@@ -183,5 +185,72 @@ export function phaseStatusLabel(phase: Pick<TrackerPhase, "status" | "wait">): 
       return "In progress";
     default:
       return phase.status === "" ? "Planned" : phase.status;
+  }
+}
+
+/** What Eric read on a card; the server refuses an answer once the card moves on. */
+export function trackerCardSeen(card: TrackerCard): TrackerCardSeen {
+  return {
+    id: card.id,
+    status: card.status,
+    title: card.title,
+    ask: card.ask,
+    comments: card.comments.length,
+  };
+}
+
+const DECIDED = new Set(["approved", "rejected", "answered"]);
+
+/** Cards still waiting on Eric, and those he answered that the agent has not finished. */
+export function decisionCards(cards: ReadonlyArray<TrackerCard>): {
+  readonly open: ReadonlyArray<TrackerCard>;
+  readonly decided: ReadonlyArray<TrackerCard>;
+} {
+  return {
+    open: cards.filter((card) => card.status === "open"),
+    decided: cards.filter((card) => DECIDED.has(card.status)),
+  };
+}
+
+export function cardStatusLabel(card: Pick<TrackerCard, "status">): string {
+  switch (card.status) {
+    case "open":
+      return "Waiting on you";
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "answered":
+      return "Answered";
+    default:
+      return card.status;
+  }
+}
+
+/** The hub's minute stamps, read as a date and a time. */
+export function trackerWhen(at: string): string {
+  return at.replace("T", " ").slice(0, 16);
+}
+
+/** The Done deciding line, in the hub page's words. */
+export function doneDecidingText(work: Pick<TrackerWorkDetail, "handoff" | "thread">): string {
+  const { handoff, thread } = work;
+  const target =
+    thread === null ? null : `${thread.title || "the linked conversation"} on ${thread.host}`;
+  const at = handoff.at === null ? "" : ` ${trackerWhen(handoff.at)}`;
+  if (!handoff.waiting) {
+    return target === null
+      ? "Send your saved answers. No conversation is linked, so the hub starts one."
+      : `Send your saved answers to ${target}.`;
+  }
+  switch (handoff.delivery) {
+    case "pending":
+      return `Recorded${at}; waiting for ${thread?.host ?? "the relay"} to post it.`;
+    case "stale":
+      return `Recorded${at}, not posted yet: ${handoff.reason ?? "no reason given"}.`;
+    case "sent":
+      return `Sent${at}${target === null ? "" : ` to ${target}`}.`;
+    default:
+      return `Saved${at}, but not sent: ${handoff.reason ?? "no delivery yet"}.`;
   }
 }

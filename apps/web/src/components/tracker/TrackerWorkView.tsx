@@ -20,9 +20,11 @@ import { buildThreadRouteParams } from "~/threadRoutes";
 import { Button } from "../ui/button";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { TrackerDecisions } from "./TrackerDecisions";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   currentPhase,
+  decisionCards,
   phaseStatusLabel,
   progressFraction,
   trackerDocUrl,
@@ -226,8 +228,11 @@ export function TrackerWorkView(props: {
     status: work.status,
     state: "",
   });
+  const navigate = useNavigate();
   const phase = currentPhase(work.phases);
-  const openCards = work.cards.filter((card) => card.status === "open");
+  const { open: openCards, decided: decidedCards } = decisionCards(work.cards);
+  // Decisions are answered on the full Tracker page inside T3, not in a browser.
+  const openDecisions = () => void navigate({ to: "/tracker", search: { work: work.id } });
   const hubPage = `${work.hubUrl}/p/${encodeURIComponent(work.id)}`;
 
   return (
@@ -299,22 +304,38 @@ export function TrackerWorkView(props: {
         </Section>
       ) : null}
 
-      {openCards.length > 0 ? (
+      {props.density === "page" ? (
+        openCards.length > 0 || decidedCards.length > 0 || work.handoff.waiting ? (
+          <Section title="Decisions">
+            <TrackerDecisions environmentId={props.environmentId} work={work} />
+          </Section>
+        ) : null
+      ) : openCards.length > 0 || (decidedCards.length > 0 && !work.handoff.waiting) ? (
         <Section title="Waiting on You">
           <ul className="flex flex-col gap-1.5 text-sm">
             {openCards.map((card) => (
               <li key={card.id} className="flex items-baseline gap-2">
                 <span className="text-warning-foreground">Decide:</span>
-                <a
-                  className="min-w-0 flex-1 underline-offset-4 hover:underline"
-                  href={`${hubPage}/decisions`}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left underline-offset-4 hover:underline"
+                  onClick={openDecisions}
                 >
                   {card.title}
-                </a>
+                </button>
               </li>
             ))}
+            {openCards.length === 0 ? (
+              <li>
+                <button
+                  type="button"
+                  className="text-left underline-offset-4 hover:underline"
+                  onClick={openDecisions}
+                >
+                  Answered, not sent yet: press Done Deciding
+                </button>
+              </li>
+            ) : null}
           </ul>
         </Section>
       ) : null}

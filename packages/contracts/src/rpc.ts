@@ -358,6 +358,8 @@ import {
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
+  TrackerAnswerCardInput,
+  TrackerDoneDecidingInput,
   TrackerGetPortfolioInput,
   TrackerGetWorkInput,
   TrackerHubError,
@@ -566,6 +568,8 @@ export const WS_METHODS = {
   trackerGetWork: "tracker.getWork",
   trackerGetLaunchPrompt: "tracker.getLaunchPrompt",
   trackerLinkThread: "tracker.linkThread",
+  trackerAnswerCard: "tracker.answerCard",
+  trackerDoneDeciding: "tracker.doneDeciding",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1060,6 +1064,18 @@ const WsTrackerGetLaunchPromptRpc = Rpc.make(WS_METHODS.trackerGetLaunchPrompt, 
 const WsTrackerLinkThreadRpc = Rpc.make(WS_METHODS.trackerLinkThread, {
   payload: TrackerLinkThreadInput,
   success: TrackerLinkedThread,
+  error: trackerRpcError,
+});
+
+const WsTrackerAnswerCardRpc = Rpc.make(WS_METHODS.trackerAnswerCard, {
+  payload: TrackerAnswerCardInput,
+  success: TrackerWorkDetail,
+  error: trackerRpcError,
+});
+
+const WsTrackerDoneDecidingRpc = Rpc.make(WS_METHODS.trackerDoneDeciding, {
+  payload: TrackerDoneDecidingInput,
+  success: TrackerWorkDetail,
   error: trackerRpcError,
 });
 
@@ -2215,6 +2231,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTrackerGetWorkRpc,
   WsTrackerGetLaunchPromptRpc,
   WsTrackerLinkThreadRpc,
+  WsTrackerAnswerCardRpc,
+  WsTrackerDoneDecidingRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,
