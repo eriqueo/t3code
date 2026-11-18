@@ -136,7 +136,13 @@ export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase 
  * Sidebar buttons. Each sends the agent in the linked conversation one message; the
  * procedure for each id lives in the project-tracker skill's "Sidebar actions" section.
  */
-export type TrackerActionId = "next-step" | "update-roadmap" | "handoff" | "grill" | "close-out";
+export type TrackerActionId =
+  | "next-step"
+  | "update-roadmap"
+  | "handoff"
+  | "grill"
+  | "adversarial-review"
+  | "close-out";
 
 export interface TrackerAction {
   readonly id: TrackerActionId;
@@ -150,6 +156,7 @@ const PROJECT_ACTIONS: ReadonlyArray<TrackerAction> = [
   { id: "update-roadmap", label: "Update Roadmap", confirm: false },
   { id: "handoff", label: "Handoff", confirm: false },
   { id: "grill", label: "Grill the Plan", confirm: false },
+  { id: "adversarial-review", label: "Adversarial Review", confirm: false },
   { id: "close-out", label: "Close Out", confirm: true },
 ];
 
@@ -170,7 +177,15 @@ export function trackerActionMessage(
   workId: string,
   threadId: string,
 ): string {
-  return `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
+  // Review attacks the agent's own last answer, so it needs no tracker procedure.
+  if (id === "adversarial-review") {
+    return `Use adversarial-review on your latest output in this conversation (record \`${workId}\`, thread \`${threadId}\`).`;
+  }
+  const action = `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
+  // A tidy keeps the project open, so it rides with the roadmap update rather than Close Out.
+  return id === "update-roadmap"
+    ? `${action} Then use project-tidy: remove finished scratch, stale files and merged branches, and bring the plan, handoff and tracker record up to date.`
+    : action;
 }
 
 export function phaseStatusLabel(phase: Pick<TrackerPhase, "status" | "wait">): string {

@@ -146,11 +146,13 @@ describe("tracker logic", () => {
       "update-roadmap",
       "handoff",
       "grill",
+      "adversarial-review",
       "close-out",
     ]);
     expect(trackerActions({ kind: "task" }).map((action) => action.id)).toEqual([
       "next-step",
       "grill",
+      "adversarial-review",
       "close-out",
     ]);
     expect(trackerActions({ kind: null }).some((action) => action.id === "handoff")).toBe(false);
@@ -262,8 +264,14 @@ describe("tracker logic", () => {
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {
+    expect(trackerActionMessage("next-step", "t3-tracker", "thread-1")).toBe(
+      "Use project-tracker: sidebar action `next-step` on record `t3-tracker` from thread `thread-1`.",
+    );
     expect(trackerActionMessage("update-roadmap", "t3-tracker", "thread-1")).toBe(
-      "Use project-tracker: sidebar action `update-roadmap` on record `t3-tracker` from thread `thread-1`.",
+      "Use project-tracker: sidebar action `update-roadmap` on record `t3-tracker` from thread `thread-1`. Then use project-tidy: remove finished scratch, stale files and merged branches, and bring the plan, handoff and tracker record up to date.",
+    );
+    expect(trackerActionMessage("adversarial-review", "t3-tracker", "thread-1")).toBe(
+      "Use adversarial-review on your latest output in this conversation (record `t3-tracker`, thread `thread-1`).",
     );
   });
 });
