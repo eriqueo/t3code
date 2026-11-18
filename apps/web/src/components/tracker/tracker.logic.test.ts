@@ -146,13 +146,13 @@ describe("tracker logic", () => {
       "update-roadmap",
       "handoff",
       "grill",
-      "adversarial-review",
+      "prove-it",
       "close-out",
     ]);
     expect(trackerActions({ kind: "task" }).map((action) => action.id)).toEqual([
       "next-step",
       "grill",
-      "adversarial-review",
+      "prove-it",
       "close-out",
     ]);
     expect(trackerActions({ kind: null }).some((action) => action.id === "handoff")).toBe(false);
@@ -270,8 +270,8 @@ describe("tracker logic", () => {
     expect(trackerActionMessage("update-roadmap", "t3-tracker", "thread-1")).toBe(
       "Use project-tracker: sidebar action `update-roadmap` on record `t3-tracker` from thread `thread-1`. Then use project-tidy: remove finished scratch, stale files and merged branches, and bring the plan, handoff and tracker record up to date.",
     );
-    expect(trackerActionMessage("adversarial-review", "t3-tracker", "thread-1")).toBe(
-      "Use adversarial-review on your latest output in this conversation (record `t3-tracker`, thread `thread-1`).",
+    expect(trackerActionMessage("prove-it", "t3-tracker", "thread-1")).toBe(
+      "Use prove-it on your latest substantive result in this conversation: the last plan, diagnosis, findings, report or code change you gave, not a status note or your reply to this message. Name that target in one sentence, then start the review. If a newer message from Eric changed the subject, say which result you would review and ask first (record `t3-tracker`, thread `thread-1`).",
     );
   });
 });

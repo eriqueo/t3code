@@ -141,7 +141,7 @@ export type TrackerActionId =
   | "update-roadmap"
   | "handoff"
   | "grill"
-  | "adversarial-review"
+  | "prove-it"
   | "close-out";
 
 export interface TrackerAction {
@@ -156,7 +156,7 @@ const PROJECT_ACTIONS: ReadonlyArray<TrackerAction> = [
   { id: "update-roadmap", label: "Update Roadmap", confirm: false },
   { id: "handoff", label: "Handoff", confirm: false },
   { id: "grill", label: "Grill the Plan", confirm: false },
-  { id: "adversarial-review", label: "Adversarial Review", confirm: false },
+  { id: "prove-it", label: "Prove It", confirm: false },
   { id: "close-out", label: "Close Out", confirm: true },
 ];
 
@@ -177,9 +177,11 @@ export function trackerActionMessage(
   workId: string,
   threadId: string,
 ): string {
-  // Review attacks the agent's own last answer, so it needs no tracker procedure.
-  if (id === "adversarial-review") {
-    return `Use adversarial-review on your latest output in this conversation (record \`${workId}\`, thread \`${threadId}\`).`;
+  // The review attacks the agent's own last result, so it needs no tracker procedure.
+  // The message says what counts as that result: the button can be pressed after a
+  // status note, and the agent must not review the note or this request.
+  if (id === "prove-it") {
+    return `Use prove-it on your latest substantive result in this conversation: the last plan, diagnosis, findings, report or code change you gave, not a status note or your reply to this message. Name that target in one sentence, then start the review. If a newer message from Eric changed the subject, say which result you would review and ask first (record \`${workId}\`, thread \`${threadId}\`).`;
   }
   const action = `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
   // A tidy keeps the project open, so it rides with the roadmap update rather than Close Out.
