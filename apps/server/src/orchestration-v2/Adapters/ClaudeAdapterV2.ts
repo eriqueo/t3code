@@ -2534,20 +2534,9 @@ function nextClaudeGoal(
       checks: Number(active[2] ?? 0),
     };
   }
-  if (
-    message.type !== "user" ||
-    message.parent_tool_use_id !== null ||
-    message.isSynthetic !== true ||
-    current === null
-  ) {
-    return undefined;
-  }
-  const prefix = `Stop hook feedback:\n[${current.objective}]: `;
-  const content = message.message.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  const text = claudeSyntheticUserText(message);
+  if (text === null || current === null) return undefined;
+  const prefix = claudeGoalCheckPrefix(current);
   if (!text.startsWith(prefix)) return undefined;
   return {
     ...current,
@@ -2555,6 +2544,45 @@ function nextClaudeGoal(
     checks: (current.checks ?? 0) + 1,
     lastCheck: text.slice(prefix.length).trim(),
   };
+}
+
+// The CLI feeds a Stop hook's block reason back as a synthetic user frame: one `[source]: reason` line per hook.
+const CLAUDE_STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:\n";
+
+function claudeGoalCheckPrefix(goal: OrchestrationV2ProviderGoal): string {
+  return `${CLAUDE_STOP_HOOK_FEEDBACK_PREFIX}[${goal.objective}]: `;
+}
+
+function claudeSyntheticUserText(message: SDKMessage): string | null {
+  if (
+    message.type !== "user" ||
+    message.parent_tool_use_id !== null ||
+    message.isSynthetic !== true
+  ) {
+    return null;
+  }
+  const content = message.message.content;
+  return typeof content === "string"
+    ? content
+    : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+/**
+ * The reason a Stop hook blocked the answer just written, so the agent rewrites it.
+ * A /goal check is progress the goal row reports, not a rejected answer.
+ */
+function claudeStopHookRejection(
+  goal: OrchestrationV2ProviderGoal | null,
+  message: SDKMessage,
+): string | null {
+  const text = claudeSyntheticUserText(message);
+  if (text === null || !text.startsWith(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX)) return null;
+  if (goal !== null && text.startsWith(claudeGoalCheckPrefix(goal))) return null;
+  const reason = text
+    .slice(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX.length)
+    .replace(/^\[[^\]\n]*\]:\s*/u, "")
+    .trim();
+  return reason.length > 0 ? reason : "Stop hook";
 }
 
 /** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
@@ -4776,6 +4804,7 @@ function buildAssistantArtifacts(input: {
   readonly completedAt: DateTime.Utc;
   // A streamed message keeps its first timestamp across updates.
   readonly createdAt?: DateTime.Utc;
+  readonly stopHookFeedback?: string;
 }): {
   readonly node: OrchestrationV2ExecutionNode;
   readonly message: OrchestrationV2ConversationMessage;
@@ -4850,6 +4879,7 @@ function buildAssistantArtifacts(input: {
       completedAt,
       updatedAt: input.completedAt,
       type: "assistant_message",
+      ...(input.stopHookFeedback === undefined ? {} : { stopHookFeedback: input.stopHookFeedback }),
       messageId,
       text: input.text,
       streaming,
@@ -8956,6 +8986,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly startedAt: DateTime.Utc;
           readonly completedAt: DateTime.Utc;
           readonly createdAt?: DateTime.Utc;
+          readonly stopHookFeedback?: string;
         }) {
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
           const artifacts = buildAssistantArtifacts({
@@ -8969,6 +9000,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             startedAt: input.startedAt,
             completedAt: input.completedAt,
             ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
+            ...(input.stopHookFeedback === undefined
+              ? {}
+              : { stopHookFeedback: input.stopHookFeedback }),
           });
           yield* Effect.all(
             [
@@ -10529,6 +10563,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
+          const stopHookFeedback = claudeStopHookRejection(
+            goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null,
+            message,
+          );
+          if (stopHookFeedback !== null) {
+            // Mark the rejected answer so clients fold it behind its rewrite.
+            const rejected = context.assistant.lastReply;
+            context.assistant.lastReply = null;
+            if (rejected !== null) {
+              yield* publishAssistantArtifacts({
+                context,
+                ...rejected,
+                status: "completed",
+                createdAt: rejected.startedAt,
+                completedAt: yield* DateTime.now,
+                stopHookFeedback,
+              });
+            }
+          }
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;

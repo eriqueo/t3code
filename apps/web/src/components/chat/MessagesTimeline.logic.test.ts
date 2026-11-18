@@ -34,6 +34,7 @@ import {
   deriveMessagesTimelineRowsWithState,
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
+  rewrittenAnswerLabel,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
@@ -55,6 +56,17 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
       visible: true,
     });
+  });
+});
+
+describe("rewrittenAnswerLabel", () => {
+  it.each([
+    ["Use plain words.\nReplace 'leverages'.", "Rewritten after a check: Use plain words."],
+    ["\n  Offer one next step.  ", "Rewritten after a check: Offer one next step."],
+    [`${"a".repeat(100)}`, `Rewritten after a check: ${"a".repeat(79)}…`],
+    ["  \n ", "Rewritten after a check"],
+  ])("folds %j into one line", (feedback, label) => {
+    expect(rewrittenAnswerLabel(feedback)).toBe(label);
   });
 });
 

@@ -5,7 +5,7 @@ import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basen
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
-import { GitForkIcon, ReplyIcon } from "lucide-react";
+import { ChevronRightIcon, GitForkIcon, ReplyIcon, RotateCcwIcon } from "lucide-react";
 import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
 import { responseContextRecord } from "~/lib/composerContextRecords";
 import { Button } from "../ui/button";
@@ -23,7 +23,8 @@ import {
 } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
-import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
+import { resolveAssistantMessageCopyState, rewrittenAnswerLabel } from "./MessagesTimeline.logic";
+import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
@@ -48,6 +49,14 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   const text = liveText ?? row.message.text;
   const messageText =
     text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
+  const stopHookFeedback =
+    row.projectedItem?.item.type === "assistant_message"
+      ? row.projectedItem.item.stopHookFeedback
+      : undefined;
+
+  if (stopHookFeedback !== undefined && !row.message.streaming) {
+    return <RewrittenAnswerRow text={messageText} stopHookFeedback={stopHookFeedback} />;
+  }
 
   return (
     <>
@@ -105,6 +114,68 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
         ) : null}
       </div>
     </>
+  );
+}
+
+/** An answer a Stop hook rejected: one line naming the check, opening to the original. */
+function RewrittenAnswerRow({
+  text,
+  stopHookFeedback,
+}: {
+  text: string;
+  stopHookFeedback: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const label = rewrittenAnswerLabel(stopHookFeedback);
+
+  return (
+    <div className="min-w-0 px-1 py-0.5" data-rewritten-answer="true">
+      <WorkLogRow
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={label}
+        onClick={() => setExpanded((open) => !open)}
+        onKeyDown={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            (event.key === "Enter" || event.key === " ")
+          ) {
+            event.preventDefault();
+            setExpanded((open) => !open);
+          }
+        }}
+        icon={<RotateCcwIcon aria-hidden className="size-3.5 text-icon-muted" />}
+        label={label}
+        trailing={
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+              expanded && "rotate-90",
+            )}
+          />
+        }
+      >
+        {expanded ? (
+          <WorkLogDetails>
+            <div data-thread-find-text="true">
+              <ChatMarkdown
+                text={text}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+                skills={ctx.skills}
+                headingLevelOffset={MESSAGE_HEADING_LEVEL}
+                onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+                onImageExpand={ctx.onImageExpand}
+              />
+            </div>
+          </WorkLogDetails>
+        ) : null}
+      </WorkLogRow>
+    </div>
   );
 }
 

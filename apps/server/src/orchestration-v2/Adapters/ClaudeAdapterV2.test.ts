@@ -23897,6 +23897,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid,
         session_id: WAKE_NATIVE_SESSION,
       });
+    /** Each assistant message's text and Stop hook feedback, as its latest update left them. */
+    const assistantStopHookFeedback = (
+      events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    ) => {
+      const latest = new Map<string, readonly [string, string | undefined]>();
+      for (const event of events) {
+        if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+          latest.set(event.turnItem.id, [event.turnItem.text, event.turnItem.stopHookFeedback]);
+        }
+      }
+      return [...latest.values()];
+    };
     const goalStatuses = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
       events.flatMap((event) =>
         event.type === "provider_thread.updated" && event.providerThread.goal != null
@@ -23938,6 +23950,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             lastCheck: "One test still fails.",
           },
           { objective: condition, status: "complete", checks: 1 },
+        ]);
+        // A goal check is progress, not a rejected answer.
+        assert.deepEqual(assistantStopHookFeedback(harness.events), [
+          ["Fixing the first test.", undefined],
+          ["All tests pass now.", undefined],
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("marks an answer a Stop hook rejected so clients fold it behind the rewrite", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-hook-attempt"),
+            text: "Summarise the change",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: "hook-first", text: "The refactor leverages synergies." }),
+          stopHookFeedback(
+            "hook-block",
+            "~/.claude/hooks/plain-language.sh",
+            "Use plain words.\nReplace 'leverages synergies'.",
+          ),
+          makeAssistantTextFrame({ uuid: "hook-rewrite", text: "The change merges two modules." }),
+          makeResultFrame({ uuid: "hook-result", result: "The change merges two modules." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.deepEqual(assistantStopHookFeedback(harness.events), [
+          ["The refactor leverages synergies.", "Use plain words.\nReplace 'leverages synergies'."],
+          ["The change merges two modules.", undefined],
         ]);
       }).pipe(
         Effect.scoped,

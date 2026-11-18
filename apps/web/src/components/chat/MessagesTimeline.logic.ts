@@ -713,6 +713,23 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
+const REWRITTEN_ANSWER_REASON_MAX_LENGTH = 80;
+
+/** The one line an answer a Stop hook rejected folds into: the first line of the hook's reason. */
+export function rewrittenAnswerLabel(stopHookFeedback: string): string {
+  const reason =
+    stopHookFeedback
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  if (reason.length === 0) return "Rewritten after a check";
+  const short =
+    reason.length > REWRITTEN_ANSWER_REASON_MAX_LENGTH
+      ? `${reason.slice(0, REWRITTEN_ANSWER_REASON_MAX_LENGTH - 1).trimEnd()}…`
+      : reason;
+  return `Rewritten after a check: ${short}`;
+}
+
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;

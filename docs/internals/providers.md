@@ -136,7 +136,10 @@ the next goal turn on its own milliseconds after the last one completes, so the
 and adds that turn to it. One run can therefore own several native turns. `/goal` commands that
 start no Codex turn settle on a provider turn without a native ref, which native rollback must
 not count. Claude's SDK mode emits no goal events; its adapter reads goal state from the
-synthetic command output and Stop hook feedback in the transcript.
+synthetic command output and Stop hook feedback in the transcript. Stop hook feedback that is
+not a goal check rejected the answer just written; the adapter marks that answer's
+`stopHookFeedback`, and the web client folds it into one line above its rewrite. Codex reports
+these blocks through `hook/completed` and `hookPrompt` items, which its adapter does not map yet.
 
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
