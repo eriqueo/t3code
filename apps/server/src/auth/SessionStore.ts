@@ -397,6 +397,8 @@ export class SessionStore extends Context.Service<
       readonly peerLink?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
+      /** The session lives until it goes unused for its TTL, instead of ending at a fixed deadline. */
+      readonly idleRenewal?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -421,7 +423,10 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /**
+     * Completes when a live socket's session is revoked or expires without a renewal for its DPoP key.
+     * A connected idle-renewal session counts as used, so its socket keeps renewing it.
+     */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
@@ -447,6 +452,8 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+// Idle-renewal sessions write their new deadline at most this often.
+const IDLE_RENEWAL_WRITE_INTERVAL = Duration.days(1);
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -459,6 +466,11 @@ const SessionClaims = Schema.Struct({
   rtc: Schema.optionalKey(RuntimeMode),
   /** Signed, so a client cannot shed its peer link's limits. */
   plk: Schema.optionalKey(Schema.Literal(1)),
+  /**
+   * Idle renewal: the row's `expires_at` is the deadline and moves forward with use; `exp`
+   * stays the original deadline, which builds without this claim still enforce.
+   */
+  idl: Schema.optionalKey(Schema.Literal(1)),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -523,6 +535,10 @@ const make = Effect.gen(function* () {
   // Newest session per DPoP key. A live socket moves to it at expiry, so a
   // client that renews its short-lived token keeps its socket.
   const latestSessionByProofKey = new Map<string, AuthSessionId>();
+  // Idle-renewal sessions seen since start. Their socket tickets carry no claim of their own, but
+  // a ticket is issued only after its bearer token passes verify, which records it here. One entry
+  // per paired client; entries for ended sessions are inert because the row decides.
+  const idleRenewalSessionIds = new Set<AuthSessionId>();
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -682,6 +698,7 @@ const make = Effect.gen(function* () {
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         ...(input?.peerLink === true ? { plk: 1 as const } : {}),
+        ...(input?.idleRenewal === true ? { idl: 1 as const } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -731,6 +748,7 @@ const make = Effect.gen(function* () {
           : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
       ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
       if (claims.jkt) latestSessionByProofKey.set(claims.jkt, sessionId);
+      if (claims.idl === 1) idleRenewalSessionIds.add(sessionId);
       if (replacedSessionIds.length > 0) {
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -769,6 +787,23 @@ const make = Effect.gen(function* () {
       } satisfies IssuedSession;
     },
   );
+
+  // Use of an idle-renewal session moves its deadline to a full TTL from now, at most once per
+  // write interval. Returns the deadline the row holds afterwards.
+  const renewIdleSession = Effect.fn("SessionStore.renewIdleSession")(function* (
+    sessionId: AuthSessionId,
+    expiresAt: DateTime.Utc,
+    now: DateTime.Utc,
+  ) {
+    const ttlMillis = Duration.toMillis(DEFAULT_SESSION_TTL);
+    const remaining = expiresAt.epochMilliseconds - now.epochMilliseconds;
+    if (remaining > ttlMillis - Duration.toMillis(IDLE_RENEWAL_WRITE_INTERVAL)) return expiresAt;
+    const renewed = DateTime.add(now, { milliseconds: ttlMillis });
+    if (yield* authSessions.extendExpiry({ sessionId, now, expiresAt: renewed })) return renewed;
+    // Revoked, expired or renewed concurrently: report what the row now holds.
+    const row = yield* authSessions.getById({ sessionId });
+    return Option.isSome(row) ? row.value.expiresAt : expiresAt;
+  });
 
   const verify: SessionStore["Service"]["verify"] = Effect.fn("SessionStore.verify")(
     function* (token) {
@@ -829,7 +864,8 @@ const make = Effect.gen(function* () {
           expirationClaim: claims.exp,
         });
       }
-      if (claims.exp <= observedAt.epochMilliseconds) {
+      const idleRenewal = claims.idl === 1;
+      if (!idleRenewal && claims.exp <= observedAt.epochMilliseconds) {
         return yield* new SessionTokenExpiredError({
           sessionId: claims.sid,
           expiresAt: expiresAt.value,
@@ -853,13 +889,29 @@ const make = Effect.gen(function* () {
           revokedAt: row.value.revokedAt,
         });
       }
+      let deadline: DateTime.DateTime = expiresAt.value;
+      if (idleRenewal) {
+        if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+          return yield* new SessionTokenExpiredError({
+            sessionId: claims.sid,
+            expiresAt: row.value.expiresAt,
+            observedAt,
+          });
+        }
+        idleRenewalSessionIds.add(claims.sid);
+        deadline = yield* renewIdleSession(claims.sid, row.value.expiresAt, observedAt).pipe(
+          Effect.mapError(
+            (cause) => new SessionCredentialVerificationError({ sessionId: claims.sid, cause }),
+          ),
+        );
+      }
 
       return {
         sessionId: claims.sid,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt: deadline,
         subject: claims.sub,
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -1113,10 +1165,30 @@ const make = Effect.gen(function* () {
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
           if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          // The row holds the deadline, which idle renewal moves later.
+          const latest = rows[rows.length - 1];
+          if (latest !== undefined && Option.isSome(latest)) current = latest.value;
           const now = yield* DateTime.now;
+          const idle =
+            idleRenewalSessionIds.has(current.sessionId) &&
+            (yield* Ref.get(connectedSessionsRef)).has(current.sessionId) &&
+            current.expiresAt.epochMilliseconds > now.epochMilliseconds;
+          if (idle) {
+            const renewed = yield* renewIdleSession(current.sessionId, current.expiresAt, now).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SessionCredentialVerificationError({ sessionId: current.sessionId, cause }),
+              ),
+            );
+            current = { ...current, expiresAt: renewed };
+          }
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            // A connected idle session wakes before its deadline to renew it.
+            const wake = idle
+              ? Math.min(remaining, Duration.toMillis(IDLE_RENEWAL_WRITE_INTERVAL))
+              : remaining;
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(wake)));
             continue;
           }
           const successorId =

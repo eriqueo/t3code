@@ -27,6 +27,14 @@ model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
+A bearer token exchanged from a one-time pairing token cannot renew itself, so
+its session renews with use. Its signed `idl` claim makes the session row's
+`expires_at` the deadline, and each use, or a connected socket, moves it to 30
+days ahead, at most once a day
+([SessionStore](../../apps/server/src/auth/SessionStore.ts)). Builds that do not
+know the claim keep the token's original `exp`. Desktop bootstrap, DPoP, MCP and
+issued bot sessions keep their fixed deadlines.
+
 ### Guest links are not sessions
 
 A [guest link](../user/guest-links.md) gives one browser read access to one

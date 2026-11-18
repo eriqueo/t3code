@@ -1074,6 +1074,9 @@ export const make = Effect.gen(function* () {
                     }
                   : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                // A paired device has no way to renew a bearer token, so its session lasts
+                // while it is used. Desktop bootstrap re-mints itself; DPoP renews hourly.
+                idleRenewal: grant.method === "one-time-token" && !input?.proofKeyThumbprint,
                 client: {
                   ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),

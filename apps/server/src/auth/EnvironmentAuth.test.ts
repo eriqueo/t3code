@@ -19,6 +19,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import { base64UrlDecodeUtf8 } from "./utils.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const TEST_SERVER_PORT = 13_773;
@@ -69,6 +70,9 @@ const makeBearerRequest = (
   }) as unknown as Parameters<
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
+
+const sessionClaims = (token: string): { readonly idl?: number } =>
+  JSON.parse(base64UrlDecodeUtf8(token.split(".")[0] ?? ""));
 
 const requestMetadata = {
   deviceType: "desktop" as const,
@@ -212,6 +216,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(dpop.access_token).not.toBe(exchanged.access_token);
         expect(dpop.token_type).toBe("DPoP");
         expect(dpop.scope).toBe("orchestration:read");
+        expect(sessionClaims(exchanged.access_token).idl).toBeUndefined();
+        expect(sessionClaims(dpop.access_token).idl).toBeUndefined();
 
         const secondBearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
           token,
@@ -588,6 +594,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         );
         expect(pairedSession.subject).toBe("one-time-token");
         expect(active.map((entry) => entry.sessionId)).toContain(pairedSession.sessionId);
+        // Only the paired device's session renews with use.
+        expect(sessionClaims(paired.access_token).idl).toBe(1);
+        expect(sessionClaims(second.access_token).idl).toBeUndefined();
+        expect(sessionClaims((yield* serverAuth.issueSession()).token).idl).toBeUndefined();
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({

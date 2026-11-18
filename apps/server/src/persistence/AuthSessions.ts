@@ -99,6 +99,13 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const ExtendAuthSessionExpiryInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  now: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+});
+export type ExtendAuthSessionExpiryInput = typeof ExtendAuthSessionExpiryInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -126,6 +133,10 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    /** Moves a live session's deadline later. False when it is revoked, already expired at `now`, or already later. */
+    readonly extendExpiry: (
+      input: ExtendAuthSessionExpiryInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly getProofKeyThumbprint: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
@@ -336,6 +347,22 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  // One statement, so a session revoked or expired between read and write is never revived.
+  const extendExpiryRows = SqlSchema.findAll({
+    Request: ExtendAuthSessionExpiryInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, now, expiresAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET expires_at = ${expiresAt}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
+          AND expires_at < ${expiresAt}
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const revokeSessionRows = SqlSchema.findAll({
     Request: RevokeAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -520,6 +547,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const extendExpiry: AuthSessionRepository["Service"]["extendExpiry"] = (input) =>
+    extendExpiryRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.extendExpiry:query",
+          "AuthSessionRepository.extendExpiry:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
   const getProofKeyThumbprint: AuthSessionRepository["Service"]["getProofKeyThumbprint"] = (
     input,
   ) =>
@@ -555,6 +594,7 @@ export const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    extendExpiry,
     getProofKeyThumbprint,
     revokeByProofKey,
   } satisfies AuthSessionRepository["Service"];
