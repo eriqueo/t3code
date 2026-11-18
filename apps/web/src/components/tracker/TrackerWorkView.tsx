@@ -18,7 +18,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
 import { Button } from "../ui/button";
-import { Menu, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -156,12 +156,14 @@ function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerW
         }
       />
       <MenuPopup align="start">
-        <MenuGroupLabel>Start a draft in</MenuGroupLabel>
-        {projects.map((project) => (
-          <MenuItem key={project.id} onClick={() => launch(project.id)}>
-            {project.title}
-          </MenuItem>
-        ))}
+        <MenuGroup>
+          <MenuGroupLabel>Start a draft in</MenuGroupLabel>
+          {projects.map((project) => (
+            <MenuItem key={project.id} onClick={() => launch(project.id)}>
+              {project.title}
+            </MenuItem>
+          ))}
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
