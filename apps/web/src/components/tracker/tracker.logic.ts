@@ -123,11 +123,11 @@ export function trackerSummary(work: Pick<TrackerWorkDetail, "tagline" | "goal">
   return work.tagline.trim() || work.goal.trim();
 }
 
-/** The phase being worked on: one marked active, else the first not yet done. */
+/** The phase being worked on: one marked active, else the first not yet done or dropped. */
 export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase | null {
   return (
     phases.find((phase) => phase.status === "active") ??
-    phases.find((phase) => phase.status !== "done") ??
+    phases.find((phase) => phase.status !== "done" && phase.status !== "dropped") ??
     null
   );
 }
@@ -194,6 +194,8 @@ export function phaseStatusLabel(phase: Pick<TrackerPhase, "status" | "wait">): 
   switch (phase.status) {
     case "done":
       return "Done";
+    case "dropped":
+      return "Dropped";
     case "waiting":
       return phase.wait ? `Waiting: ${phase.wait}` : "Waiting";
     case "next":

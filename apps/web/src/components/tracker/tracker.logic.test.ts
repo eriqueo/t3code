@@ -138,6 +138,8 @@ describe("tracker logic", () => {
       currentPhase([phase("P1", "done"), phase("P2", "next"), phase("P3", "active")])?.id,
     ).toBe("P3");
     expect(currentPhase([phase("P1", "done")])).toBeNull();
+    expect(currentPhase([phase("P1", "dropped"), phase("P2", "next")])?.id).toBe("P2");
+    expect(currentPhase([phase("P1", "done"), phase("P2", "dropped")])).toBeNull();
   });
 
   it("offers roadmap and handoff only to projects, and confirms only Close Out", () => {
