@@ -403,16 +403,17 @@
 
       body {
         background: #ffffff;
-        color: #262626;
         font-family:
           -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
       }
 
       html.dark body {
         background: #000000;
-        color: #f5f5f5;
       }
 
+      /* Text color stays on the splash, not body: this sheet is unlayered, so a
+         body color here outranks the app's layered `body { text-foreground }`
+         and every theme's text color for the app's lifetime. */
       #boot-shell {
         position: relative;
         overflow: hidden;
@@ -421,7 +422,11 @@
         align-items: center;
         justify-content: center;
         background: inherit;
-        color: inherit;
+        color: #262626;
+      }
+
+      html.dark #boot-shell {
+        color: #f5f5f5;
       }
 
       html[data-theme-selected="true"] #boot-shell {
