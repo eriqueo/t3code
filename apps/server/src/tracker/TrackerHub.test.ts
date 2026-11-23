@@ -127,6 +127,75 @@ describe("TrackerHub", () => {
     assert.strictEqual(portfolio.attention[0]?.workId, "a");
   });
 
+  it("gives each thread on this host its record's domain, preferring work that can still move", () => {
+    const owner = (threadId: string, host = context.host) => ({ host, threadId, title: "" });
+    const portfolio = TrackerHub.portfolioFromHub(
+      {
+        portfolio: {
+          domains: [
+            { id: "datax", label: "DataX" },
+            { id: "infra", label: "Infra" },
+          ],
+          groups: [{ domain: "hwc", label: "HWC" }],
+          projects: {
+            old: { id: "old", status: "complete", domain: "infra", thread: owner("shared") },
+            live: {
+              id: "live",
+              status: "active",
+              domain: "datax",
+              subdomain: "integrations",
+              thread: owner("shared"),
+            },
+            parked: { id: "parked", status: "parked", domain: "hwc", thread: owner("legacy") },
+            done: { id: "done", status: "complete", domain: "infra", thread: owner("finished") },
+            elsewhere: {
+              id: "elsewhere",
+              status: "active",
+              domain: "infra",
+              thread: owner("laptop-thread", "hwc-work"),
+            },
+            untitled: { id: "untitled", status: "active", domain: "infra", thread: null },
+            nodomain: { id: "nodomain", status: "active", thread: owner("loose") },
+            unlabelled: {
+              id: "unlabelled",
+              status: "active",
+              domain: "gauntlets",
+              thread: owner("g"),
+            },
+          },
+        },
+        attention: {},
+        observations: {},
+      },
+      context,
+    );
+
+    assert.deepStrictEqual(portfolio.threads, [
+      {
+        threadId: "shared",
+        workId: "live",
+        domain: "datax",
+        domainLabel: "DataX",
+        subdomain: "integrations",
+      },
+      { threadId: "legacy", workId: "parked", domain: "hwc", domainLabel: "HWC", subdomain: null },
+      {
+        threadId: "finished",
+        workId: "done",
+        domain: "infra",
+        domainLabel: "Infra",
+        subdomain: null,
+      },
+      {
+        threadId: "g",
+        workId: "unlabelled",
+        domain: "gauntlets",
+        domainLabel: "gauntlets",
+        subdomain: null,
+      },
+    ]);
+  });
+
   it("names each linked thread after its work, once, and leaves other threads alone", () => {
     const work = (id: string, title: string) =>
       TrackerHub.portfolioFromHub(

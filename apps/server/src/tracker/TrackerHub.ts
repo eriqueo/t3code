@@ -138,7 +138,47 @@ export const portfolioFromHub = (
       .map(record)
       .map((target) => ({ workId: text(target.project), threadId: text(target.threadId) }))
       .filter((link) => link.workId !== "" && link.threadId !== ""),
+    threads: threadRecords(portfolio, context.host),
   };
+};
+
+/**
+ * Each conversation on `host` with the record it owns, so the sidebar can group by domain.
+ * Finished records count too: their conversation is still tracked work, not loose. A thread
+ * that owns several records takes the first that can still move, else the first finished.
+ */
+const threadRecords = (portfolio: Json, host: string): TrackerPortfolio["threads"] => {
+  const labels = new Map<string, string>();
+  for (const group of list(portfolio.groups).map(record)) {
+    labels.set(text(group.domain) || text(group.group), text(group.label));
+  }
+  // The hub's domain list names every domain, including ones no live record uses.
+  for (const domain of list(portfolio.domains).map(record)) {
+    labels.set(text(domain.id), text(domain.label));
+  }
+  const chosen = new Map<string, { live: boolean; entry: TrackerPortfolio["threads"][number] }>();
+  for (const work of Object.values(record(portfolio.projects)).map(record)) {
+    const thread = record(work.thread);
+    const threadId = text(thread.threadId);
+    const domain = text(work.domain);
+    if (threadId === "" || text(thread.host) !== host || text(work.id) === "" || domain === "") {
+      continue;
+    }
+    const live = !TERMINAL_STATUSES.has(text(work.status));
+    const current = chosen.get(threadId);
+    if (current !== undefined && (current.live || !live)) continue;
+    chosen.set(threadId, {
+      live,
+      entry: {
+        threadId,
+        workId: text(work.id),
+        domain,
+        domainLabel: labels.get(domain) || domain,
+        subdomain: textOrNull(work.subdomain),
+      },
+    });
+  }
+  return [...chosen.values()].map(({ entry }) => entry);
 };
 
 /**

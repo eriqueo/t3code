@@ -63,6 +63,17 @@ export const TrackerThreadLink = Schema.Struct({
 });
 export type TrackerThreadLink = typeof TrackerThreadLink.Type;
 
+/** The record a conversation on this server's host owns, by the record's own `thread`. */
+export const TrackerThreadRecord = Schema.Struct({
+  threadId: Schema.String,
+  workId: Schema.String,
+  domain: Schema.String,
+  /** The hub's name for the domain, or its id when the hub names none. */
+  domainLabel: Schema.String,
+  subdomain: Schema.NullOr(Schema.String),
+});
+export type TrackerThreadRecord = typeof TrackerThreadRecord.Type;
+
 export const TrackerPortfolio = Schema.Struct({
   /** The host name this server reports to the hub; links are scoped to it. */
   host: Schema.String,
@@ -75,6 +86,8 @@ export const TrackerPortfolio = Schema.Struct({
   works: Schema.Array(TrackerWorkSummary),
   attention: Schema.Array(TrackerAttentionItem),
   links: Schema.Array(TrackerThreadLink),
+  /** One entry per conversation on this host that owns a record, finished records included. */
+  threads: Schema.Array(TrackerThreadRecord),
 });
 export type TrackerPortfolio = typeof TrackerPortfolio.Type;
 

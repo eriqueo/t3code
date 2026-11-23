@@ -48,6 +48,7 @@ const portfolio = (patch: Partial<TrackerPortfolio>): TrackerPortfolio => ({
   works: [],
   attention: [],
   links: [],
+  threads: [],
   ...patch,
 });
 
