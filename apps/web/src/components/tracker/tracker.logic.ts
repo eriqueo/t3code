@@ -156,11 +156,14 @@ const PROJECT_ACTIONS: ReadonlyArray<TrackerAction> = [
 
 const PROJECT_ONLY = new Set<TrackerActionId>(["update-roadmap", "handoff"]);
 
-/** A task has no phases and no handoff, so it gets no roadmap or handoff button. */
+/**
+ * A record without phases has no roadmap and needs no handoff, so it gets neither
+ * button. Phases decide, not the record's kind (tracker K4).
+ */
 export function trackerActions(
-  work: Pick<TrackerWorkDetail, "kind">,
+  work: Pick<TrackerWorkDetail, "phases">,
 ): ReadonlyArray<TrackerAction> {
-  return work.kind === "project"
+  return work.phases.length > 0
     ? PROJECT_ACTIONS
     : PROJECT_ACTIONS.filter((action) => !PROJECT_ONLY.has(action.id));
 }

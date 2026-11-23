@@ -144,8 +144,21 @@ describe("tracker logic", () => {
     expect(currentPhase([phase("P1", "done"), phase("P2", "dropped")])).toBeNull();
   });
 
-  it("offers roadmap and handoff only to projects, and confirms only Close Out", () => {
-    expect(trackerActions({ kind: "project" }).map((action) => action.id)).toEqual([
+  it("offers roadmap and handoff only to records with phases, and confirms only Close Out", () => {
+    const phased = {
+      phases: [
+        {
+          id: "P1",
+          title: "Ship",
+          status: "next",
+          planned: null,
+          done: null,
+          terminal: true,
+          wait: null,
+        },
+      ],
+    };
+    expect(trackerActions(phased).map((action) => action.id)).toEqual([
       "next-step",
       "update-roadmap",
       "handoff",
@@ -153,15 +166,14 @@ describe("tracker logic", () => {
       "prove-it",
       "close-out",
     ]);
-    expect(trackerActions({ kind: "task" }).map((action) => action.id)).toEqual([
+    expect(trackerActions({ phases: [] }).map((action) => action.id)).toEqual([
       "next-step",
       "grill",
       "prove-it",
       "close-out",
     ]);
-    expect(trackerActions({ kind: null }).some((action) => action.id === "handoff")).toBe(false);
     expect(
-      trackerActions({ kind: "project" })
+      trackerActions(phased)
         .filter((action) => action.confirm)
         .map((action) => action.id),
     ).toEqual(["close-out"]);
