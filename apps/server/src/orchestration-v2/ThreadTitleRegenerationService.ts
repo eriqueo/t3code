@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { LinkedWorkTitles } from "../tracker/TrackerHub.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { forkInheritedRunOrdinals, ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
@@ -80,6 +81,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const fileSystem = yield* FileSystem.FileSystem;
+  const linkedWorkTitles = yield* LinkedWorkTitles;
 
   const complete = (input: {
     readonly threadId: ThreadId;
@@ -162,6 +164,13 @@ const make = Effect.gen(function* () {
       );
       if (projection.thread.titleRegeneration?.requestId !== input.requestId) {
         return { status: "stale" as const };
+      }
+      // A thread linked to tracked work is named after that work, not by the model.
+      const workTitle = linkedWorkTitles.titleFor(input.threadId);
+      if (workTitle !== undefined) {
+        return workTitle === projection.thread.title
+          ? { status: "unchanged" as const }
+          : { status: "renamed" as const, title: workTitle };
       }
 
       const project = yield* projects.get(projection.thread.projectId);

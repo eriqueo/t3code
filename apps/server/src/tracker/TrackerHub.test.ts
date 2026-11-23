@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe } from "vite-plus/test";
 
 import * as TrackerHub from "./TrackerHub.ts";
@@ -64,6 +65,8 @@ const hubWith = (routes: Record<string, () => Response>) => {
   });
   const layer = TrackerHub.layerWithHubUrl(HUB).pipe(
     Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+    // The hub keys links by host; pin it so the test passes on any machine.
+    Layer.provide(Layer.succeed(HostProcess.Hostname, context.host)),
   );
   return { sent, layer };
 };
@@ -122,6 +125,38 @@ describe("TrackerHub", () => {
     assert.deepStrictEqual(portfolio.domains[0]?.workIds, ["a"]);
     assert.deepStrictEqual(portfolio.links, [{ workId: "a", threadId: "thread-1" }]);
     assert.strictEqual(portfolio.attention[0]?.workId, "a");
+  });
+
+  it("names each linked thread after its work, once, and leaves other threads alone", () => {
+    const work = (id: string, title: string) =>
+      TrackerHub.portfolioFromHub(
+        {
+          portfolio: { projects: { [id]: { id, title, status: "active" } } },
+          attention: {},
+          observations: {},
+        },
+        context,
+      ).works[0]!;
+    const titles = TrackerHub.linkedWorkTitles({
+      works: [work("a", "T3 chats linked to trackers"), work("b", "Second"), work("blank", " ")],
+      links: [
+        { workId: "a", threadId: "t1" },
+        // A thread linked twice keeps the first work, so the sync cannot alternate.
+        { workId: "b", threadId: "t1" },
+        { workId: "b", threadId: "t2" },
+        // Finished work is not in the portfolio, so its thread keeps its own title.
+        { workId: "finished", threadId: "t3" },
+        { workId: "blank", threadId: "t4" },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      [...titles],
+      [
+        ["t1", "T3 chats linked to trackers"],
+        ["t2", "Second"],
+      ],
+    );
   });
 
   it("reads phases, waits, cards and the linked thread from a project record", () => {

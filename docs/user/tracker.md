@@ -22,6 +22,11 @@ An unlinked conversation lists active work instead. Pick one, then press **Link 
 Conversation**. The hub keeps one link per work item: linking replaces the earlier
 conversation as the place your decisions are delivered, and the panel names what it replaces.
 
+A linked conversation is named after its work, and keeps that name: the server renames it when
+the link is made (here or with `tracker-link`) and within a minute of the work being renamed,
+and title generation leaves it alone. A conversation whose link moves elsewhere, or whose work
+is finished, keeps the name it had.
+
 ## Start an agent
 
 **Launch Agent** on a work item opens a new draft in the project you choose, with the hub's

@@ -212,6 +212,8 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as TrackerHub from "./tracker/TrackerHub.ts";
+import * as TrackerThreadTitles from "./tracker/TrackerThreadTitles.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -724,8 +726,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderInstallation.layer,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  TrackerThreadTitles.layer.pipe(Layer.provide(TrackerHub.layer)),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
+  // Below title generation and the tracker title sync, so both read the same links.
+  Layer.provideMerge(TrackerHub.layerLinkedWorkTitles),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(SecretCheck.layer),

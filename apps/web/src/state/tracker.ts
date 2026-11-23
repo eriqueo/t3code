@@ -3,7 +3,7 @@ import type { EnvironmentId, TrackerPortfolio, TrackerWorkDetail } from "@t3tool
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { environmentServerConfigsAtom, primaryServerConfigAtom, serverEnvironment } from "./server";
+import { primaryServerConfigAtom, serverEnvironment } from "./server";
 
 export interface TrackerRead<A> {
   readonly value: A | null;
@@ -80,21 +80,6 @@ export function useTrackerLinkedWorkTitle(
   threadId: string,
 ): string | null {
   return useAtomValue(linkedWorkTitleAtom(`${environmentId}\n${threadId}`));
-}
-
-/** Every connected machine whose server can reach a tracker hub. */
-// A joined key, so a config push that changes nothing tracker-related renders nothing.
-const trackerEnvironmentIdsKeyAtom = Atom.make((get): string => {
-  const ids: Array<EnvironmentId> = [];
-  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
-    if (config.environment.capabilities.trackerHub === true) ids.push(environmentId);
-  }
-  return ids.join("\n");
-});
-
-export function useTrackerEnvironmentIds(): ReadonlyArray<EnvironmentId> {
-  const key = useAtomValue(trackerEnvironmentIdsKeyAtom);
-  return key === "" ? [] : (key.split("\n") as Array<EnvironmentId>);
 }
 
 export function useTrackerWork(

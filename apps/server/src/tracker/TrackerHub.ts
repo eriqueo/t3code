@@ -141,6 +141,45 @@ export const portfolioFromHub = (
   };
 };
 
+/**
+ * A linked conversation carries its work's title, so the thread list and the tracker name
+ * the same thing. Maps each linked thread to that title. The portfolio lists only work
+ * that can still move, so a link to finished work leaves the thread's title alone. A thread
+ * linked to several works takes the first the hub lists, so it cannot alternate.
+ */
+export const linkedWorkTitles = (
+  portfolio: Pick<TrackerPortfolio, "links" | "works">,
+): ReadonlyMap<string, string> => {
+  const titleByWork = new Map(portfolio.works.map((work) => [work.id, work.title.trim()]));
+  const titles = new Map<string, string>();
+  for (const link of portfolio.links) {
+    const title = titleByWork.get(link.workId) ?? "";
+    if (title !== "" && !titles.has(link.threadId)) titles.set(link.threadId, title);
+  }
+  return titles;
+};
+
+/**
+ * The last thread-to-work-title map the hub gave this host. Title generation reads it so a
+ * linked thread keeps its work's title; the default knows no links.
+ */
+export class LinkedWorkTitles extends Context.Reference<{
+  readonly titleFor: (threadId: string) => string | undefined;
+  readonly replace: (titles: ReadonlyMap<string, string>) => void;
+}>("t3/tracker/LinkedWorkTitles", {
+  defaultValue: () => ({ titleFor: () => undefined, replace: () => undefined }),
+}) {}
+
+export const layerLinkedWorkTitles = Layer.sync(LinkedWorkTitles, () => {
+  let current: ReadonlyMap<string, string> = new Map();
+  return {
+    titleFor: (threadId) => current.get(threadId),
+    replace: (titles) => {
+      current = titles;
+    },
+  };
+});
+
 const linkedThreadFromHub = (value: unknown): TrackerLinkedThread | null => {
   const thread = record(value);
   const threadId = text(thread.threadId);

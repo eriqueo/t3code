@@ -257,6 +257,7 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as TrackerHub from "./tracker/TrackerHub.ts";
+import * as TrackerThreadTitles from "./tracker/TrackerThreadTitles.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1570,6 +1571,7 @@ export const layerWsRpc = (
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const trackerHub = yield* TrackerHub.TrackerHub;
+      const trackerThreadTitles = yield* TrackerThreadTitles.TrackerThreadTitles;
       const textGenerators = yield* TextGenerators.TextGenerators;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -2708,7 +2710,8 @@ export const layerWsRpc = (
         [WS_METHODS.trackerGetPortfolio]: () => trackerHub.portfolio,
         [WS_METHODS.trackerGetWork]: (input) => trackerHub.work(input),
         [WS_METHODS.trackerGetLaunchPrompt]: (input) => trackerHub.launchPrompt(input),
-        [WS_METHODS.trackerLinkThread]: (input) => trackerHub.linkThread(input),
+        [WS_METHODS.trackerLinkThread]: (input) =>
+          trackerHub.linkThread(input).pipe(Effect.tap(() => trackerThreadTitles.sync)),
         [WS_METHODS.trackerAnswerCard]: (input) => trackerHub.answerCard(input),
         [WS_METHODS.trackerDoneDeciding]: (input) => trackerHub.doneDeciding(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),

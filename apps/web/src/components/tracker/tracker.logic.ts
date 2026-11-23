@@ -112,25 +112,6 @@ export function trackerDocUrl(hubUrl: string, workId: string, path: string): str
   return `${hubUrl}/p/${encodeURIComponent(workId)}/docs?doc=${encodeURIComponent(path)}`;
 }
 
-/**
- * A linked conversation carries its work's title, so the thread list and the tracker
- * name the same thing. Returns the renames still owed; threads this host lacks are skipped.
- */
-export function owedThreadTitles(
-  portfolio: Pick<TrackerPortfolio, "links" | "works"> | null,
-  threadTitles: ReadonlyMap<string, string>,
-): ReadonlyArray<{ readonly threadId: string; readonly title: string }> {
-  if (portfolio === null) return [];
-  const titleByWork = new Map(portfolio.works.map((work) => [work.id, work.title]));
-  return portfolio.links.flatMap((link) => {
-    const title = titleByWork.get(link.workId)?.trim() ?? "";
-    const current = threadTitles.get(link.threadId);
-    return title === "" || current === undefined || current === title
-      ? []
-      : [{ threadId: link.threadId, title }];
-  });
-}
-
 /** The sidebar's one line: a tagline when the record has one, else the goal. */
 export function trackerSummary(work: Pick<TrackerWorkDetail, "tagline" | "goal">): string {
   return work.tagline.trim() || work.goal.trim();

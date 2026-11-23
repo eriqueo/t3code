@@ -63,7 +63,7 @@ function LinkThisConversation(props: {
       input: {
         workId: props.work.id,
         threadId: props.threadRef.threadId,
-        // TrackerTitleSync renames the conversation to the work's title once linked.
+        // The server renames the conversation to the work's title once linked.
         title: props.work.title,
         expectedThreadId: current?.threadId ?? null,
       },

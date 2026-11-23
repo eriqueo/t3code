@@ -26,6 +26,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as TrackerHub from "../tracker/TrackerHub.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -54,6 +55,8 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    /** Threads the tracker hub links to work, by the work's title. */
+    readonly linkedWorkTitles?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -105,6 +108,10 @@ function makeHarness(
         Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),
         layerServerSettings,
         NodeServices.layer,
+        Layer.succeed(TrackerHub.LinkedWorkTitles, {
+          titleFor: (threadId) => options.linkedWorkTitles?.[threadId],
+          replace: () => undefined,
+        }),
       ),
     ),
   );
@@ -466,6 +473,55 @@ describe("ThreadTitleRegenerationService", () => {
         const renamed = yield* threads.getThreadProjection(threadId);
         assert.equal(renamed.thread.title, "Manual title");
         assert.isNotOk(renamed.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("names a thread linked to tracked work after the work, not the model", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        linkedWorkTitles: { "thread:title:linked": "T3 chats linked to trackers" },
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:linked:create",
+          thread: "thread:title:linked",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:linked:message",
+          threadId,
+          text: "work on this",
+        });
+        const initial = yield* armRegeneration({ command: "command:title:linked:1", threadId });
+        yield* titleRegeneration.execute({
+          threadId,
+          requestId: initial,
+          kind: {
+            type: "initial",
+            messageId: MessageId.make("command:title:linked:message:message"),
+          },
+        });
+        assert.equal(
+          (yield* threads.getThreadProjection(threadId)).thread.title,
+          "T3 chats linked to trackers",
+        );
+
+        const regenerate = yield* armRegeneration({ command: "command:title:linked:2", threadId });
+        yield* titleRegeneration.execute({
+          threadId,
+          requestId: regenerate,
+          kind: { type: "regenerate" },
+        });
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.equal(projection.thread.title, "T3 chats linked to trackers");
+        assert.deepInclude(projection.thread.lastTitleRegeneration, {
+          requestId: regenerate,
+          status: "unchanged",
+        });
       }).pipe(Effect.provide(harness.layer));
     }),
   );
