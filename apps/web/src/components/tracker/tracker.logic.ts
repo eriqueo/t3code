@@ -8,6 +8,19 @@ import type {
   TrackerWorkSummary,
 } from "@t3tools/contracts";
 
+/** Hyphens, underscores and spaces all separate words, so "work memory" finds `work-memory-ownership`. */
+const searchWords = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[-_\s]+/g, " ")
+    .trim();
+
+/** Eric searches by the title he sees or by the id an agent reported. */
+export function workMatchesQuery(work: Pick<TrackerWorkSummary, "title" | "id">, query: string) {
+  const needle = searchWords(query);
+  return needle === "" || searchWords(`${work.title} ${work.id}`).includes(needle);
+}
+
 /** Herdr terminals share the hub's link slot; T3 cannot open one. */
 const HERDR_LINK_PREFIX = "herdr:";
 

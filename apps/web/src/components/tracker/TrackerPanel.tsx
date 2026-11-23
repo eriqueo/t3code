@@ -21,6 +21,7 @@ import {
   linkedWorkIdForThread,
   trackerActionMessage,
   trackerActions,
+  workMatchesQuery,
   workStatus,
   type TrackerAction,
   type TrackerActionId,
@@ -155,11 +156,8 @@ function AgentActions(props: {
 
 function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: string) => void }) {
   const [query, setQuery] = useState("");
-  const needle = query.trim().toLowerCase();
   const works = props.portfolio.works.filter(
-    (work) =>
-      work.status === "active" &&
-      (needle === "" || `${work.title} ${work.id}`.toLowerCase().includes(needle)),
+    (work) => work.status === "active" && workMatchesQuery(work, query),
   );
   return (
     <div className="flex flex-col gap-3">

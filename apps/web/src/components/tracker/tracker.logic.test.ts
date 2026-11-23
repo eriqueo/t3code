@@ -17,6 +17,7 @@ import {
   trackerCardSeen,
   trackerSummary,
   trackerWhen,
+  workMatchesQuery,
   workStatus,
 } from "./tracker.logic";
 
@@ -263,6 +264,16 @@ describe("tracker logic", () => {
       }),
     ).toBe("Saved, but not sent: no relay.");
     expect(trackerWhen("2026-11-18T10:01:33-07:00")).toBe("2026-11-18 10:01");
+  });
+
+  it("finds work by its title or by the words of its id", () => {
+    const record = work("work-memory-ownership", { title: "Single-owner work facts in tracker" });
+    expect(workMatchesQuery(record, "")).toBe(true);
+    expect(workMatchesQuery(record, "Single-owner")).toBe(true);
+    expect(workMatchesQuery(record, "work-memory")).toBe(true);
+    expect(workMatchesQuery(record, "work memory")).toBe(true);
+    expect(workMatchesQuery(record, "  Memory_Ownership ")).toBe(true);
+    expect(workMatchesQuery(record, "memory tracker")).toBe(false);
   });
 
   it("names the skill, the action, the record and the thread in each message", () => {
