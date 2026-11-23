@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -24,6 +25,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { useTrackerThreadRecords } from "../state/tracker";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -42,6 +44,7 @@ vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/use-orchestration-command", { spy: true });
+vi.mock("../state/tracker", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -353,5 +356,75 @@ describe("sidebar settled pagination", () => {
     const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
+});
+
+describe("sidebar tracker domains", () => {
+  it("heads active threads by tracker domain, and keeps folders while no hub has answered", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    stack.defer(() => vi.mocked(useTrackerThreadRecords).mockReset());
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+    const nixos = project("nixos-folder");
+    const datax = project("datax-folder");
+    const shell = (id: string, projectId: ProjectId, pinnedAt: string | null = null) =>
+      ({
+        ...makeThreadFixture({
+          environmentId: EnvironmentId.make("local"),
+          id: ThreadId.make(id),
+          projectId,
+          title: id,
+        }),
+        pinnedAt,
+      }) as EnvironmentThreadShell;
+    vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
+    vi.mocked(useProjects).mockReturnValue([nixos, datax]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      shell("Codebase audit", nixos.id),
+      shell("Drive sync", datax.id),
+      shell("Loose chat", nixos.id),
+      shell("Refinery", nixos.id, "2026-01-01T00:00:00.000Z"),
+    ]);
+    const key = (id: string) =>
+      scopedThreadKey(scopeThreadRef(EnvironmentId.make("local"), ThreadId.make(id)));
+    const records = new Map([
+      [key("Codebase audit"), { domain: "infra", domainLabel: "Infra", subdomain: null }],
+      [key("Drive sync"), { domain: "datax", domainLabel: "DataX", subdomain: "integrations" }],
+      [key("Refinery"), { domain: "infra", domainLabel: "Infra", subdomain: "agents" }],
+    ]);
+    vi.mocked(useTrackerThreadRecords).mockReturnValue(records);
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Drive sync").first()).toBeInTheDocument();
+    const texts = (selector: string) =>
+      [...screen.container.querySelectorAll(selector)].map((node) => node.textContent);
+    expect(texts('[data-testid="sidebar-domain-folder"]')).toEqual([
+      "DataX",
+      "Infra",
+      "Not tracked",
+    ]);
+    expect(texts('[data-testid="sidebar-project-folder"]')).toEqual([]);
+    const row = (title: string) =>
+      screen.container.querySelector(`[data-thread-item="${key(title)}"]`)?.textContent ?? "";
+    expect(row("Drive sync")).toContain("integrations");
+    expect(row("Refinery")).toContain("infra·agents");
+    expect(row("Refinery")).not.toContain("nixos-folder");
+
+    vi.mocked(useTrackerThreadRecords).mockReturnValue(null);
+    await screen.rerender(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect
+      .poll(() => texts('[data-testid="sidebar-project-folder"]'))
+      .toEqual([expect.stringContaining("datax-folder"), expect.stringContaining("nixos-folder")]);
+    expect(texts('[data-testid="sidebar-domain-folder"]')).toEqual([]);
+    expect(row("Refinery")).toContain("nixos-folder");
   });
 });

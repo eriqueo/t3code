@@ -30,6 +30,77 @@ export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
 }
 
+/** The tracker domain heading's sidebar tree row; "Not tracked" has no domain. */
+export function sidebarDomainRowId(domain: string | null) {
+  return domain === null ? "domain-untracked" : `domain:${domain}`;
+}
+
+/** The status dot a closed heading shows for the most urgent thread it hides. */
+function useHiddenThreadsDot(collapsed: boolean, hiddenThreads: readonly EnvironmentThreadShell[]) {
+  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  return collapsed
+    ? resolveSidebarFolderDot(
+        hiddenThreads.map((thread) => ({
+          ...thread,
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            localLastVisitedAtById[
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+            ],
+          ),
+        })),
+      )
+    : null;
+}
+
+/**
+ * A tracker domain heading in the boring sidebar. It folds like a project folder and,
+ * while closed, shows the hidden count and status dot; it has no icon and no new-thread
+ * button, since a domain is not a place on disk.
+ */
+export const SidebarDomainFolderHeader = memo(function SidebarDomainFolderHeader(props: {
+  domain: string | null;
+  label: string;
+  collapsed: boolean;
+  hiddenThreads: readonly EnvironmentThreadShell[];
+  onToggle: (domain: string | null) => void;
+}) {
+  const { domain, collapsed, hiddenThreads } = props;
+  const dot = useHiddenThreadsDot(collapsed, hiddenThreads);
+  return (
+    <li data-testid="sidebar-domain-folder" className="relative mt-2 list-none first:mt-0">
+      <button
+        type="button"
+        data-sidebar-row={sidebarDomainRowId(domain)}
+        aria-expanded={!collapsed}
+        onClick={() => props.onToggle(domain)}
+        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wide text-sidebar-muted-foreground uppercase">
+          {props.label}
+        </span>
+        {dot ? (
+          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
+            <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+          </span>
+        ) : null}
+        {collapsed && hiddenThreads.length > 0 ? (
+          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground">
+            {hiddenThreads.length}
+          </span>
+        ) : null}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 text-sidebar-muted-foreground transition-transform",
+            collapsed && "-rotate-90",
+          )}
+        />
+      </button>
+    </li>
+  );
+});
+
 /**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
  * count and chevron, with the count and a status dot only while it is closed, so a
@@ -45,20 +116,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
-  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
-    : null;
+  const dot = useHiddenThreadsDot(collapsed, hiddenThreads);
   return (
     <li
       data-testid="sidebar-project-folder"

@@ -552,6 +552,11 @@ type SidebarThreadRowProps = {
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
+  // Set when the sidebar heads rows by tracker domain: the row drops its folder name,
+  // folder icon, branch and tracker icon, and shows `trackerLabel` instead.
+  trackerGrouped: boolean;
+  // The record's subdomain on a grouped row, `domain·subdomain` on a pinned one.
+  trackerLabel: string | null;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -1155,23 +1160,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
-  const trackerLinkIndicator =
-    trackerWorkTitle === null ? null : (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              role="img"
-              aria-label={`Linked to tracker: ${trackerWorkTitle}`}
-              className="inline-flex shrink-0 items-center text-muted-foreground/65"
-            />
-          }
-        >
-          <KanbanSquareIcon aria-hidden className="size-3" />
-        </TooltipTrigger>
-        <TooltipPopup>Tracker: {trackerWorkTitle}</TooltipPopup>
-      </Tooltip>
-    );
+  const trackerLinkIndicator = props.trackerGrouped ? (
+    props.trackerLabel === null ? null : (
+      <span className="max-w-[40%] shrink-0 truncate text-2xs text-sidebar-muted-foreground">
+        {props.trackerLabel}
+      </span>
+    )
+  ) : trackerWorkTitle === null ? null : (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={`Linked to tracker: ${trackerWorkTitle}`}
+            className="inline-flex shrink-0 items-center text-muted-foreground/65"
+          />
+        }
+      >
+        <KanbanSquareIcon aria-hidden className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>Tracker: {trackerWorkTitle}</TooltipPopup>
+    </Tooltip>
+  );
 
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
@@ -1180,20 +1190,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
+  // A row under a tracker heading names its work, not where it runs; the tooltip keeps the branch.
+  const shownBranch = props.trackerGrouped ? null : checkoutThread.branch;
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
-    !checkoutThread.branch &&
+    !shownBranch &&
     !showsScratchMachine &&
     prBadge === null &&
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {checkoutThread.branch ? (
+      {shownBranch ? (
         <>
           <ThreadWorktreeIndicator thread={checkoutThread} />
           <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
+            <MiddleTruncate value={shownBranch} showTitle={false} />
           </span>
         </>
       ) : showsScratchMachine ? (
@@ -1270,8 +1282,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   multiline
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
-                  // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  // Lines titles up with the folder name, past its chevron and icon; a
+                  // domain heading has no icon, so its rows sit one step in from it.
+                  inFolder && (props.trackerGrouped ? "ps-5" : "ps-9"),
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -1479,13 +1492,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.project && !props.trackerGrouped ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
-              {props.projectDisplayName ? (
+              {props.trackerGrouped ? (
+                <span className="min-w-0 flex-1 truncate font-normal text-secondary-label text-xs">
+                  {props.trackerLabel}
+                </span>
+              ) : props.projectDisplayName ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
                 >

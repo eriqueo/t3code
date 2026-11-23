@@ -39,8 +39,10 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  groupSidebarThreadsByDomain,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  sidebarTrackerRowLabel,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1746,6 +1748,64 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("groupSidebarThreadsByDomain", () => {
+  it("heads the five tracker domains in order, then older domains, then untracked threads", () => {
+    const record = (domain: string, domainLabel: string, subdomain: string | null = null) => ({
+      domain,
+      domainLabel,
+      subdomain,
+    });
+    const records = new Map([
+      ["refinery-1", record("refinery", "Refinery")],
+      ["infra-1", record("infra", "Infra", "agents")],
+      ["hwc-1", record("hwc", "HWC")],
+      ["datax-1", record("datax", "DataX", "integrations")],
+      ["infra-2", record("infra", "Infra")],
+      ["home-1", record("home", "Home")],
+    ]);
+    const threads = [
+      "untracked-1",
+      "refinery-1",
+      "infra-1",
+      "hwc-1",
+      "datax-1",
+      "infra-2",
+      "untracked-2",
+      "home-1",
+    ];
+
+    const groups = groupSidebarThreadsByDomain(threads, (id) => records.get(id) ?? null).map(
+      (group) => [group.domain, group.label, group.threads],
+    );
+
+    // Heartwood and Personal have no threads, so they get no heading.
+    expect(groups).toEqual([
+      ["datax", "DataX", ["datax-1"]],
+      ["home", "Home", ["home-1"]],
+      ["infra", "Infra", ["infra-1", "infra-2"]],
+      ["hwc", "HWC", ["hwc-1"]],
+      ["refinery", "Refinery", ["refinery-1"]],
+      [null, "Not tracked", ["untracked-1", "untracked-2"]],
+    ]);
+    expect(groupSidebarThreadsByDomain(["untracked-1"], () => null)).toEqual([
+      { domain: null, label: "Not tracked", threads: ["untracked-1"] },
+    ]);
+    expect(groupSidebarThreadsByDomain([], () => null)).toEqual([]);
+  });
+
+  it("labels a grouped row by subdomain and a pinned row by domain and subdomain", () => {
+    expect(sidebarTrackerRowLabel({ domain: "infra", subdomain: "agents" }, "grouped")).toBe(
+      "agents",
+    );
+    expect(sidebarTrackerRowLabel({ domain: "infra", subdomain: "agents" }, "pinned")).toBe(
+      "infra·agents",
+    );
+    expect(sidebarTrackerRowLabel({ domain: "infra", subdomain: null }, "grouped")).toBeNull();
+    expect(sidebarTrackerRowLabel({ domain: "infra", subdomain: null }, "pinned")).toBe("infra");
+    expect(sidebarTrackerRowLabel(null, "pinned")).toBeNull();
   });
 });
 

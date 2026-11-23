@@ -1129,6 +1129,68 @@ export function groupSidebarThreadsByProject<
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
+/** The tracker record a sidebar thread owns, as the boring sidebar groups and labels it. */
+export interface SidebarTrackerRecord {
+  readonly domain: string;
+  readonly domainLabel: string;
+  readonly subdomain: string | null;
+}
+
+// Eric's five tracker domains lead in this order; older domains follow by label.
+const TRACKER_DOMAIN_ORDER = ["datax", "heartwood", "home", "infra", "personal"];
+
+/**
+ * Boring sidebar headings by tracker domain. Domains with no thread get no heading.
+ * Threads keep their input order, and threads that own no record go last, under
+ * "Not tracked" (`domain: null`).
+ */
+export function groupSidebarThreadsByDomain<TThread>(
+  threads: readonly TThread[],
+  recordOf: (thread: TThread) => Pick<SidebarTrackerRecord, "domain" | "domainLabel"> | null,
+): Array<{ domain: string | null; label: string; threads: TThread[] }> {
+  const byDomain = new Map<string, { domain: string; label: string; threads: TThread[] }>();
+  const untracked: TThread[] = [];
+  for (const thread of threads) {
+    const record = recordOf(thread);
+    if (record === null) {
+      untracked.push(thread);
+      continue;
+    }
+    const group = byDomain.get(record.domain) ?? {
+      domain: record.domain,
+      label: record.domainLabel,
+      threads: [],
+    };
+    group.threads.push(thread);
+    byDomain.set(record.domain, group);
+  }
+  const rank = (domain: string) => {
+    const index = TRACKER_DOMAIN_ORDER.indexOf(domain);
+    return index === -1 ? TRACKER_DOMAIN_ORDER.length : index;
+  };
+  const groups: Array<{ domain: string | null; label: string; threads: TThread[] }> = [
+    ...byDomain.values(),
+  ].toSorted(
+    (left, right) =>
+      rank(left.domain) - rank(right.domain) || left.label.localeCompare(right.label),
+  );
+  if (untracked.length > 0) groups.push({ domain: null, label: "Not tracked", threads: untracked });
+  return groups;
+}
+
+/**
+ * The muted label a tracked row carries: its subdomain under a domain heading, and
+ * `domain·subdomain` on a pinned row, which sits under no heading.
+ */
+export function sidebarTrackerRowLabel(
+  record: Pick<SidebarTrackerRecord, "domain" | "subdomain"> | null,
+  placement: "grouped" | "pinned",
+): string | null {
+  if (record === null) return null;
+  if (placement === "grouped") return record.subdomain;
+  return record.subdomain === null ? record.domain : `${record.domain}·${record.subdomain}`;
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"

@@ -154,6 +154,7 @@ import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
+import { useTrackerThreadRecords } from "../state/tracker";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -177,8 +178,11 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  groupSidebarThreadsByDomain,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
+  sidebarTrackerRowLabel,
+  type SidebarTrackerRecord,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -272,7 +276,9 @@ import {
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
+  SidebarDomainFolderHeader,
   SidebarProjectFolderHeader,
+  sidebarDomainRowId,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
@@ -371,6 +377,35 @@ interface SidebarThreadPartitionInput {
   readonly clockKey: string;
 }
 
+/** A boring sidebar heading over active threads: a project folder, or a tracker domain. */
+type SidebarFolderSource =
+  | {
+      readonly kind: "project";
+      readonly rowId: string;
+      readonly expansionKeys: readonly string[];
+      readonly group: SidebarProjectSnapshot;
+      readonly threads: readonly EnvironmentThreadShell[];
+    }
+  | {
+      readonly kind: "domain";
+      readonly rowId: string;
+      readonly expansionKeys: readonly string[];
+      /** Null for "Not tracked". */
+      readonly domain: string | null;
+      readonly label: string;
+      readonly threads: readonly EnvironmentThreadShell[];
+    };
+
+type SidebarFolder = SidebarFolderSource & {
+  readonly collapsed: boolean;
+  readonly hiddenThreads: readonly EnvironmentThreadShell[];
+};
+
+// Kept with the project folders' open state, under keys no project key can take.
+function sidebarDomainExpansionKey(domain: string | null): string {
+  return `tracker-domain:${domain ?? ""}`;
+}
+
 function scrollSidebarToTop(content: HTMLElement | null) {
   content?.closest("[data-slot=scroll-area-viewport]")?.scrollTo({ top: 0 });
 }
@@ -434,6 +469,9 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  // Each thread's tracker record once a hub has answered; boring mode then heads active
+  // threads by tracker domain instead of project folder. Null keeps the project folders.
+  readonly trackerRecords: ReadonlyMap<string, SidebarTrackerRecord> | null;
 }) {
   const {
     projectScopeKey,
@@ -446,6 +484,7 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    trackerRecords,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -557,16 +596,36 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
-  const projectFolders =
+  const groupedByTracker = folderGroups !== null && trackerRecords !== null;
+  const folderSources: readonly SidebarFolderSource[] | null =
     folderGroups === null
       ? null
-      : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
-          const collapsed = !resolveProjectExpanded(
-            projectExpandedById,
-            sidebarFolderExpansionKeys(folder.group),
-          );
-          return {
+      : trackerRecords === null
+        ? groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => ({
+            kind: "project",
+            rowId: sidebarFolderRowId(folder.group.projectKey),
+            expansionKeys: sidebarFolderExpansionKeys(folder.group),
             group: folder.group,
+            threads: folder.threads,
+          }))
+        : groupSidebarThreadsByDomain(
+            activeThreads,
+            (thread) => trackerRecords.get(threadShellKey(thread)) ?? null,
+          ).map((group) => ({
+            kind: "domain",
+            rowId: sidebarDomainRowId(group.domain),
+            expansionKeys: [sidebarDomainExpansionKey(group.domain)],
+            domain: group.domain,
+            label: group.label,
+            threads: group.threads,
+          }));
+  const projectFolders =
+    folderSources === null
+      ? null
+      : folderSources.map((folder): SidebarFolder => {
+          const collapsed = !resolveProjectExpanded(projectExpandedById, folder.expansionKeys);
+          return {
+            ...folder,
             collapsed,
             // A closed folder still shows the open thread, and hints at the rest.
             threads: collapsed
@@ -632,8 +691,13 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
+    groupedByTracker,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
+      setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
+    },
+    toggleDomainFolder: (domain: string | null) => {
+      const keys = [sidebarDomainExpansionKey(domain)];
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
     },
     renderedSettledThreads,
@@ -955,6 +1019,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectGroupByScopeKey,
     projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
+  const trackerRecords = useTrackerThreadRecords([...serverConfigs.keys()]);
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1366,7 +1431,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     workingShelfExpanded,
     toggleWorkingShelf,
     projectFolders,
+    groupedByTracker,
     toggleProjectFolder,
+    toggleDomainFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -1396,6 +1463,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+    trackerRecords,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -2055,9 +2123,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
-    projectFolders
-      ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
-      .join("\n") ?? "",
+    projectFolders?.map((folder) => `${folder.rowId}:${folder.threads.length}`).join("\n") ?? "",
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
   ].join("\0");
@@ -3428,6 +3494,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           : isCard
                             ? "card"
                             : "slim";
+                        // Under domain headings, pinned and grouped rows name their record, not their folder.
+                        const trackerPlacement = !groupedByTracker
+                          ? null
+                          : section === "pinned"
+                            ? "pinned"
+                            : folderRow
+                              ? "grouped"
+                              : null;
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3440,6 +3514,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             variant={rowVariant}
+                            trackerGrouped={trackerPlacement !== null}
+                            trackerLabel={
+                              trackerPlacement === null
+                                ? null
+                                : sidebarTrackerRowLabel(
+                                    trackerRecords?.get(threadKey) ?? null,
+                                    trackerPlacement,
+                                  )
+                            }
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
@@ -3551,24 +3634,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (projectFolders !== null && item.marker === "active-placeholder") {
                           for (const folder of projectFolders) {
                             items.push(
-                              <SidebarProjectFolderHeader
-                                key={`project-folder:${folder.group.projectKey}`}
-                                group={folder.group}
-                                collapsed={folder.collapsed}
-                                hiddenThreads={folder.hiddenThreads}
-                                onToggle={toggleProjectFolder}
-                                onNewThread={startThreadInProjectFolder}
-                                onContextMenu={handleProjectFolderContextMenu}
-                              />,
+                              folder.kind === "project" ? (
+                                <SidebarProjectFolderHeader
+                                  key={folder.rowId}
+                                  group={folder.group}
+                                  collapsed={folder.collapsed}
+                                  hiddenThreads={folder.hiddenThreads}
+                                  onToggle={toggleProjectFolder}
+                                  onNewThread={startThreadInProjectFolder}
+                                  onContextMenu={handleProjectFolderContextMenu}
+                                />
+                              ) : (
+                                <SidebarDomainFolderHeader
+                                  key={folder.rowId}
+                                  domain={folder.domain}
+                                  label={folder.label}
+                                  collapsed={folder.collapsed}
+                                  hiddenThreads={folder.hiddenThreads}
+                                  onToggle={toggleDomainFolder}
+                                />
+                              ),
                             );
                             for (const thread of folder.threads) {
-                              items.push(
-                                renderThreadRow(
-                                  thread,
-                                  "active",
-                                  sidebarFolderRowId(folder.group.projectKey),
-                                ),
-                              );
+                              items.push(renderThreadRow(thread, "active", folder.rowId));
                             }
                           }
                           continue;
