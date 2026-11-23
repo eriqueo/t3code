@@ -11,6 +11,7 @@ import {
   progressFraction,
   resumableThreadId,
   trackerActionMessage,
+  trackerActionRefusal,
   trackerActions,
   trackerDocUrl,
   trackerCardSeen,
@@ -163,6 +164,21 @@ describe("tracker logic", () => {
         .filter((action) => action.confirm)
         .map((action) => action.id),
     ).toEqual(["close-out"]);
+  });
+
+  it("sends actions only from the conversation that owns the record", () => {
+    const owner = { host: "hwc-work", threadId: "thread-1", title: "CRM", linkedAt: null };
+    expect(trackerActionRefusal({ thread: owner }, "thread-1")).toBeNull();
+    // Released (settled) or never linked: the record has no conversation.
+    expect(trackerActionRefusal({ thread: null }, "thread-1")).toBe(
+      "This record has no conversation. Link this one first.",
+    );
+    expect(trackerActionRefusal({ thread: owner }, "thread-2")).toBe(
+      "This record belongs to CRM. Open that conversation or move the link here.",
+    );
+    expect(trackerActionRefusal({ thread: { ...owner, title: "" } }, "thread-2")).toBe(
+      "This record belongs to thread-1. Open that conversation or move the link here.",
+    );
   });
 
   it("opens a document in the hub's own viewer, escaping the record and path", () => {

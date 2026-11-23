@@ -20,6 +20,7 @@ import { toastManager } from "../ui/toast";
 import {
   linkedWorkIdForThread,
   trackerActionMessage,
+  trackerActionRefusal,
   trackerActions,
   workMatchesQuery,
   workStatus,
@@ -106,8 +107,15 @@ function AgentActions(props: {
   onSend: (text: string) => Promise<void>;
 }) {
   const [sending, setSending] = useState<TrackerActionId | null>(null);
+  const [triedRefused, setTriedRefused] = useState(false);
+  // Read on every render, so the message clears once the hub names this thread the owner.
+  const refusal = trackerActionRefusal(props.work, props.threadRef.threadId);
 
   const send = async (action: TrackerAction) => {
+    if (refusal !== null) {
+      setTriedRefused(true);
+      return;
+    }
     if (action.confirm) {
       const approved = await requestConfirmDialog(
         `${action.label} ${props.work.title}? The agent runs project-closeout, which closes the record.`,
@@ -150,6 +158,11 @@ function AgentActions(props: {
           </Button>
         ))}
       </div>
+      {triedRefused && refusal !== null ? (
+        <p role="status" className="text-muted-foreground text-xs">
+          {refusal}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -241,10 +254,11 @@ export function TrackerPanel(props: {
               density="panel"
               {...domainOf(portfolio.value, work.value.domain)}
               agentActions={
-                // Only once the hub itself names this thread: an optimistic or browsed
-                // record must never receive an action meant for the linked one.
-                hubLinkedId === shownId && props.onSendToConversation ? (
+                // Shown on any record; each press checks that the record's own owner is
+                // this thread, so a browsed, released or moved record never receives one.
+                props.onSendToConversation ? (
                   <AgentActions
+                    key={work.value.id}
                     threadRef={threadRef}
                     work={work.value}
                     onSend={props.onSendToConversation}

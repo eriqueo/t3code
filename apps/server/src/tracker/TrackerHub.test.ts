@@ -255,12 +255,56 @@ describe("TrackerHub", () => {
 
       assert.strictEqual(linked.threadId, "thread-2");
       assert.strictEqual(hub.sent[1]?.method, "POST");
+      // Eric's Link button moves ownership; the expectedThreadId check guards a stale view.
       assert.deepStrictEqual(hub.sent[1]?.body, {
         host: "hwc-laptop",
         id: "thread-2",
         title: "New",
+        move: true,
       });
     }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("names the owner when the hub refuses a link as owned by another thread", () => {
+    const refusedWith = (body: unknown) => {
+      let reads = 0;
+      return hubWith({
+        // The first read passes the expected-link check; the hub then names a new owner.
+        "GET /api/projects/t3-tracker": () => {
+          reads += 1;
+          return Response.json(
+            project(reads === 1 ? null : { host: "hwc-work", threadId: "other", title: "CRM" }),
+          );
+        },
+        "POST /api/projects/t3-tracker/thread": () => Response.json(body, { status: 409 }),
+      });
+    };
+    const link = Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      return yield* Effect.flip(
+        tracker.linkThread({
+          workId: "t3-tracker",
+          threadId: "thread-2" as never,
+          title: "New",
+          expectedThreadId: null,
+        }),
+      );
+    });
+    return Effect.gen(function* () {
+      // The contract's body names the owner itself.
+      const named = refusedWith({
+        error: { code: "owned-by", detail: { threadId: "owner-1", title: "Website leads" } },
+      });
+      const fromBody = yield* link.pipe(Effect.provide(named.layer));
+      assert.strictEqual(fromBody.reason, "linkChanged");
+      assert.include(fromBody.detail, "This record belongs to Website leads.");
+
+      // A legacy `{"error": "owned-by"}` names no one, so the record says who owns it.
+      const bare = refusedWith({ error: "owned-by" });
+      const fromRecord = yield* link.pipe(Effect.provide(bare.layer));
+      assert.strictEqual(fromRecord.reason, "linkChanged");
+      assert.include(fromRecord.detail, "This record belongs to CRM.");
+    });
   });
 
   it.effect("refuses to replace a link the caller has not seen", () => {

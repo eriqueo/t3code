@@ -300,10 +300,23 @@ const sameSeen = (left: TrackerCardSeen, right: TrackerCardSeen) =>
   left.ask === right.ask &&
   left.comments === right.comments;
 
-/** The hub's refusal, in its own words when it gave them. */
+/** The hub's refusal, in its own words when it gave them. Legacy routes send `{"error": code}`. */
 const hubRefusal = (body: unknown): { code: string; detail: string } => {
-  const error = record(record(body).error);
+  const raw = record(body).error;
+  if (typeof raw === "string") return { code: raw, detail: raw };
+  const error = record(raw);
   return { code: text(error.code), detail: text(error.detail) || text(error.code) };
+};
+
+/** The owner an `owned-by` refusal names, wherever this hub version puts it. */
+const ownerFromRefusal = (body: unknown): TrackerLinkedThread | null => {
+  const reply = record(body);
+  const error = record(reply.error);
+  for (const source of [error.detail, error.owner, reply.owner, reply]) {
+    const owner = linkedThreadFromHub(source);
+    if (owner !== null) return owner;
+  }
+  return null;
 };
 
 /** The hub reports `matched`, `needs_review` or `unknown`; only `needs_review` asks for action. */
@@ -506,8 +519,9 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
       return { workId, text: prompt };
     }),
     linkThread: Effect.fn("TrackerHub.linkThread")(function* (input) {
-      // The hub's link route overwrites without a guard, so compare first. Two
-      // callers can still pass this check together; the hub then keeps the later one.
+      // Eric's Link moves ownership (`move`), so the hub would replace any owner. Compare
+      // first, so a stale view never moves a link he did not see. Two callers can still
+      // pass this check together; the hub then keeps the later one.
       const current = (yield* work({ workId: input.workId })).thread;
       if ((current?.threadId ?? null) !== input.expectedThreadId) {
         return yield* new TrackerHubError({
@@ -518,13 +532,33 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
               : `Another conversation was linked meanwhile: ${current.title || current.threadId}.`,
         });
       }
-      const linked = linkedThreadFromHub(
-        yield* json(`/api/projects/${encodeURIComponent(input.workId)}/thread`, {
-          host,
-          id: input.threadId,
-          title: input.title,
-        }),
-      );
+      const path = `/api/projects/${encodeURIComponent(input.workId)}/thread`;
+      const reply = yield* post(path, {
+        host,
+        id: input.threadId,
+        title: input.title,
+        move: true,
+      });
+      if (!reply.ok) {
+        const refusal = hubRefusal(reply.json);
+        if (refusal.code !== "owned-by") {
+          return yield* new TrackerHubError({
+            reason: "refused",
+            detail: `The tracker hub did not link it: ${refusal.detail || "no reason given"}.`,
+          });
+        }
+        // An older hub names no owner in its refusal; the record does.
+        const owner =
+          ownerFromRefusal(reply.json) ?? (yield* work({ workId: input.workId })).thread;
+        return yield* new TrackerHubError({
+          reason: "linkChanged",
+          detail:
+            owner === null
+              ? "Another conversation owns this record. Reload and try again."
+              : `This record belongs to ${owner.title || owner.threadId}. The hub kept that link.`,
+        });
+      }
+      const linked = linkedThreadFromHub(reply.json);
       if (linked === null) {
         return yield* new TrackerHubError({
           reason: "invalidResponse",

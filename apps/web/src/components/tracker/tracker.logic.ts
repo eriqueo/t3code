@@ -165,6 +165,20 @@ export function trackerActions(
     : PROJECT_ACTIONS.filter((action) => !PROJECT_ONLY.has(action.id));
 }
 
+/**
+ * Why this conversation may not act on the record, or null when it owns it. The record's
+ * own `thread` is the hub's owner; one released by settling has none.
+ */
+export function trackerActionRefusal(
+  work: Pick<TrackerWorkDetail, "thread">,
+  threadId: string,
+): string | null {
+  const owner = work.thread;
+  if (owner === null) return "This record has no conversation. Link this one first.";
+  if (owner.threadId === threadId) return null;
+  return `This record belongs to ${owner.title || owner.threadId}. Open that conversation or move the link here.`;
+}
+
 /** Names the record and this thread so the skill can refuse when the link has moved. */
 export function trackerActionMessage(
   id: TrackerActionId,

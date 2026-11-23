@@ -19,13 +19,20 @@ Decisions are answered on the hub; the links there open it.
 
 In a conversation, the tracker toggle in the title bar opens the linked work beside the chat.
 An unlinked conversation lists active work instead. Pick one, then press **Link This
-Conversation**. The hub keeps one link per work item: linking replaces the earlier
-conversation as the place your decisions are delivered, and the panel names what it replaces.
+Conversation**. The linked conversation owns the work, and there is one. Your Link moves
+ownership here from the earlier conversation, which then stops receiving your decisions; the
+panel names what it replaces. If the hub still refuses, the panel names the conversation that
+owns the work.
+
+The **Ask the Agent** buttons send only from the conversation that owns the work. On work with
+no conversation (never linked, or released when its conversation was settled) or work another
+conversation owns, a press sends nothing and says so: link this conversation first, or open
+the owner.
 
 A linked conversation is named after its work, and keeps that name: the server renames it when
 the link is made (here or with `tracker-link`) and within a minute of the work being renamed,
-and title generation leaves it alone. A conversation whose link moves elsewhere, or whose work
-is finished, keeps the name it had.
+and title generation leaves it alone. A conversation whose link moves elsewhere or is released,
+or whose work is finished, keeps the name it had.
 
 ## Start an agent
 
