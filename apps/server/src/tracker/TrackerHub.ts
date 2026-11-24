@@ -297,6 +297,15 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
       .map((doc) => ({ label: text(doc.label) || text(doc.path), path: text(doc.path) }))
       .filter((doc) => doc.path !== ""),
     needsReview: needsReviewFromHub(work.freshness),
+    // Tracker K8: entries the train has not taken yet (result state "ready").
+    trains: list(work.ready)
+      .map(record)
+      .filter((entry) => text(record(entry.result).state) === "ready" && text(entry.repo) !== "")
+      .map((entry) => ({
+        repo: text(entry.repo),
+        check: text(entry.check),
+        waiting: count(entry.waiting),
+      })),
     thread: linkedThreadFromHub(record(work.handoff).thread),
     handoff: handoffFromHub(work.handoff),
   };

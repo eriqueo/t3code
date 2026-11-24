@@ -266,6 +266,16 @@ export function TrackerWorkView(props: {
             label={`Record needs review: ${work.needsReview.reasons.join("; ")}`}
           />
         ) : null}
+        {work.trains.map((train) => (
+          <p
+            key={train.repo}
+            className="text-muted-foreground text-xs"
+            data-tracker-train={train.repo}
+          >
+            <span className="block">{`Waiting for the train: ${train.repo} (${train.waiting} waiting)`}</span>
+            <span className="block break-all font-mono">{train.check}</span>
+          </p>
+        ))}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {props.actions}
           <Button

@@ -266,6 +266,28 @@ describe("TrackerHub", () => {
     );
   });
 
+  it("carries the release trains the work waits for, and not finished results (tracker K8)", () => {
+    // Shape of the hub's project view `ready` (tracker 16bc6e4).
+    const entry = (repo: string, state: string, waiting: number) => ({
+      repo,
+      branch: "feat",
+      head: "1".repeat(40),
+      check: `curl -fs ${repo}`,
+      hosts: [],
+      requires: null,
+      owner: null,
+      at: "2026-11-24T12:00:00-07:00",
+      result: { state, reason: null, at: "2026-11-24T12:00:00-07:00" },
+      waiting,
+    });
+    const work = TrackerHub.workFromHub(
+      { project: "p", ready: [entry("harness", "merged", 0), entry("nixos", "ready", 3)] },
+      context,
+    );
+    assert.deepStrictEqual(work?.trains, [{ repo: "nixos", check: "curl -fs nixos", waiting: 3 }]);
+    assert.deepStrictEqual(TrackerHub.workFromHub({ project: "p" }, context)?.trains, []);
+  });
+
   it("lists the record's documents and drops entries without a path", () => {
     const work = TrackerHub.workFromHub(
       {

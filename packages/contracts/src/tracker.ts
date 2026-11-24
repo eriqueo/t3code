@@ -152,6 +152,14 @@ export const TrackerHandoffState = Schema.Struct({
 });
 export type TrackerHandoffState = typeof TrackerHandoffState.Type;
 
+/** A release train this work waits for (tracker K8): its repo, the live check and how many wait. */
+export const TrackerTrainWait = Schema.Struct({
+  repo: Schema.String,
+  check: Schema.String,
+  waiting: Schema.Number,
+});
+export type TrackerTrainWait = typeof TrackerTrainWait.Type;
+
 export const TrackerWorkDetail = Schema.Struct({
   host: Schema.String,
   hubUrl: Schema.String,
@@ -174,6 +182,8 @@ export const TrackerWorkDetail = Schema.Struct({
   docs: Schema.Array(Schema.Struct({ label: Schema.String, path: Schema.String })),
   /** Set when the hub judges the record stale against its inputs; holds the hub's reasons. */
   needsReview: Schema.NullOr(Schema.Struct({ reasons: Schema.Array(Schema.String) })),
+  /** Release trains the work is ready to ship on and still waits for; empty when none. */
+  trains: Schema.Array(TrackerTrainWait),
   /** The one conversation the hub delivers Eric's decisions to. */
   thread: Schema.NullOr(TrackerLinkedThread),
   /** Eric's last "Done deciding" and how its delivery went. */

@@ -44,6 +44,7 @@ const baseWork: TrackerWorkDetail = {
   briefs: [],
   docs: [],
   needsReview: null,
+  trains: [],
   thread: null,
   handoff: { waiting: false, at: null, delivery: null, reason: null },
 };
@@ -64,6 +65,24 @@ it("opens the tracker draft menu with its labelled project group", async () => {
   await screen.getByRole("button", { name: "Launch Agent" }).click();
   await expect.element(page.getByRole("group", { name: "Start a draft in" })).toBeVisible();
   await expect.element(page.getByRole("menuitem", { name: "My Project" })).toBeVisible();
+});
+
+it("says which release train the work waits for, with its check (tracker K8)", async () => {
+  const work: TrackerWorkDetail = {
+    ...baseWork,
+    trains: [{ repo: "nixos", check: "systemctl is-active hwc-tracker", waiting: 2 }],
+  };
+  await using _screen = await render(
+    <TrackerWorkView
+      environmentId={EnvironmentId.make("local")}
+      work={work}
+      density="panel"
+      domainColour={null}
+      domainLabel={null}
+    />,
+  );
+  await expect.element(page.getByText("Waiting for the train: nixos (2 waiting)")).toBeVisible();
+  await expect.element(page.getByText("systemctl is-active hwc-tracker")).toBeVisible();
 });
 
 it("answers a decision in T3, naming the card as Eric read it", async () => {
