@@ -254,6 +254,8 @@ describe("TrackerHub", () => {
     );
 
     assert.strictEqual(work?.status, "active");
+    // Tracker K6: a stored kind is history; T3 neither carries nor shows it.
+    assert.ok(work !== null && !("kind" in work), "a hub record's kind is not carried");
     assert.strictEqual(work?.briefs[0]?.date, "2026-11-14");
     assert.strictEqual(work?.needsReview, null);
     assert.deepStrictEqual(work?.docs, []);

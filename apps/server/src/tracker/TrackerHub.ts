@@ -93,7 +93,6 @@ export const portfolioFromHub = (
       title: text(work.title) || text(work.id),
       goal: text(work.goal),
       domain: textOrNull(work.domain),
-      kind: textOrNull(work.kind),
       status: text(work.status),
       state: text(work.state),
       openCards: count(work.open),
@@ -247,7 +246,6 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
     goal: text(work.goal),
     tagline: text(work.tagline),
     domain: textOrNull(work.domain),
-    kind: textOrNull(work.kind),
     // The hub stores no status on a record that was never parked or closed.
     status: text(work.status) || "active",
     updated: textOrNull(work.updated),

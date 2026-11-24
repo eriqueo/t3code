@@ -32,8 +32,6 @@ export const TrackerWorkSummary = Schema.Struct({
   title: Schema.String,
   goal: Schema.String,
   domain: Schema.NullOr(Schema.String),
-  /** `task`, `project`, or a kind this client does not know yet. */
-  kind: Schema.NullOr(Schema.String),
   status: Schema.String,
   /** The hub's own verdict: `ok`, `overdue`, `stale`, `complete`, and so on. */
   state: Schema.String,
@@ -164,7 +162,6 @@ export const TrackerWorkDetail = Schema.Struct({
   /** The record's one-line summary when it has one; empty otherwise. */
   tagline: Schema.String,
   domain: Schema.NullOr(Schema.String),
-  kind: Schema.NullOr(Schema.String),
   status: Schema.String,
   updated: Schema.NullOr(Schema.String),
   lastWork: Schema.NullOr(Schema.String),

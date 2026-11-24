@@ -247,7 +247,6 @@ export function TrackerWorkView(props: {
               {props.domainLabel}
             </span>
           ) : null}
-          <span className="text-muted-foreground capitalize">{work.kind ?? "work"}</span>
           <TrackerStatusText {...status} />
         </div>
         <h2 className={cn("font-serif", props.density === "page" ? "text-2xl" : "text-lg")}>

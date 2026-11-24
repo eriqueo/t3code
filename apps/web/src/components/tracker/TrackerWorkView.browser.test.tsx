@@ -34,7 +34,6 @@ const baseWork: TrackerWorkDetail = {
   goal: "",
   tagline: "",
   domain: null,
-  kind: "task",
   status: "active",
   updated: null,
   lastWork: null,
@@ -60,6 +59,8 @@ it("opens the tracker draft menu with its labelled project group", async () => {
       domainLabel={null}
     />,
   );
+  // Tracker K6: the header names no task or project kind.
+  await expect.element(page.getByText(/^(task|project)$/i)).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Launch Agent" }).click();
   await expect.element(page.getByRole("group", { name: "Start a draft in" })).toBeVisible();
   await expect.element(page.getByRole("menuitem", { name: "My Project" })).toBeVisible();

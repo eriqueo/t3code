@@ -26,7 +26,6 @@ const work = (id: string, patch: Partial<TrackerWorkSummary> = {}): TrackerWorkS
   title: id,
   goal: "",
   domain: "hwc",
-  kind: "project",
   status: "active",
   state: "ok",
   openCards: 0,
