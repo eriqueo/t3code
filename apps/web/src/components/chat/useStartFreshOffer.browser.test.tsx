@@ -5,7 +5,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
-import { useCompactHandoff } from "./useCompactHandoff";
+import { useStartFreshOffer } from "./useStartFreshOffer";
 
 const state = vi.hoisted(() => ({
   calls: [] as Array<{ readonly label: string; readonly target: unknown }>,
@@ -44,11 +44,11 @@ const projection = {
 };
 
 function Banner() {
-  const item = useCompactHandoff({
+  const item = useStartFreshOffer({
     environmentId,
     projection,
     snapshotCurrent: true,
-    // Idle overnight on an expensive context: the old client prepared a handoff here.
+    // Idle overnight on an expensive context.
     nowMinute: "2026-01-01T09:00",
     usedTokens: 150_000,
   });
@@ -60,14 +60,13 @@ function Banner() {
   );
 }
 
-it("prepares nothing on an idle thread and starts fresh as an empty thread on the same model", async () => {
+it("starts fresh on an idle thread as an empty thread on the same model", async () => {
   state.calls = [];
   await using screen = await render(<Banner />);
 
   await userEvent.click(screen.getByRole("button", { name: "Start fresh" }));
   await vi.waitFor(() => expect(state.calls).toHaveLength(1));
 
-  expect(state.calls.some((call) => call.label.includes("handoff"))).toBe(false);
   const create = state.calls[0]!;
   expect(create.label).toBe("environment-data:commands:thread:create");
   const { input } = create.target as {

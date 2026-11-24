@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { REVIEW_PROVIDER_INSTANCE_ID, type EnvironmentId } from "@t3tools/contracts";
-import { shouldOfferStartFresh } from "@t3tools/shared/contextHandoff";
+import { shouldOfferStartFresh } from "@t3tools/shared/startFresh";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -20,7 +20,7 @@ import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 /** Offers Start fresh on an expensive conversation that has sat idle. */
-export function useCompactHandoff(input: {
+export function useStartFreshOffer(input: {
   readonly environmentId: EnvironmentId;
   readonly projection: Pick<
     ThreadStructure,
@@ -47,10 +47,6 @@ export function useCompactHandoff(input: {
   if (projection === null || source === undefined) return null;
   const { thread } = projection;
   const key = JSON.stringify([environmentId, thread.id, source.id]);
-  // Decisions recorded before the transcript handoff retired still close the offer.
-  const decided =
-    thread.compactHandoff?.sourceMessageId === source.id &&
-    (thread.compactHandoff.state === "dismissed" || thread.compactHandoff.state === "started");
   const working = projection.runs.some((run) =>
     ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
   );
@@ -59,7 +55,6 @@ export function useCompactHandoff(input: {
     thread.providerInstanceId === REVIEW_PROVIDER_INSTANCE_ID ||
     thread.archivedAt !== null ||
     thread.deletedAt !== null ||
-    decided ||
     dismissed === key ||
     !shouldOfferStartFresh({
       snapshotCurrent: input.snapshotCurrent,

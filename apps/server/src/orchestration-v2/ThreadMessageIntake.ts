@@ -18,7 +18,6 @@ function dispatchWasNotAccepted(
 ) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
-    case "OrchestratorContextHandoffRetiredError":
     case "OrchestratorThreadAlreadyExistsError":
     case "OrchestratorProjectionError":
     case "OrchestratorProviderAdapterError":

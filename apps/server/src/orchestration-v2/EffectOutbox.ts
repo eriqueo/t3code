@@ -34,11 +34,6 @@ import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
-    type: Schema.Literal("thread.handoff.prepare"),
-    requestId: CommandId,
-    sourceMessageId: MessageId,
-  }),
-  Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
     processLossCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -145,8 +140,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
-  // The worker marks a reclaimed attempt interrupted instead of rerunning DX2.
-  "thread.handoff.prepare",
   "provider-runtime.continue",
   "provider-session.detach",
   "provider-thread.rollback",

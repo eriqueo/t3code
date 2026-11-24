@@ -61,13 +61,8 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
-  // The remote parent delegated the parent thread, not its subagents. The parent's
-  // Start-fresh handoff is keyed to the parent's own messages, so a child never shares it.
-  const {
-    delegatedFrom: _delegatedFrom,
-    compactHandoff: _compactHandoff,
-    ...inherited
-  } = input.parentThread;
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
     ...inherited,
     createdBy: input.createdBy,

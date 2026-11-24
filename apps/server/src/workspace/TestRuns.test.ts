@@ -8,14 +8,11 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ProcessRunner, layer as processLayer } from "../processRunner.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import { makeTestRuns } from "./TestRuns.ts";
 import { makeTestWorkspaceObserver } from "./TestWorkspace.ts";
-import { makeHandoffTestCollector } from "./TestRunReceipts.ts";
-import { renderHandoffTestEvidence } from "@t3tools/shared/contextHandoff";
 const encodeInput = Schema.encodeEffect(Schema.fromJsonString(TestRunInput));
 const encodeReceipt = Schema.encodeEffect(Schema.fromJsonString(TestRunReceipt));
 
@@ -50,91 +47,6 @@ const input = (requestId: string, script = "process.exit(0)"): TestRunInput => (
 });
 
 it.layer(environment)("explicit test runner", (it) => {
-  it.effect("bounds a receipt read waiting on the database", () =>
-    Effect.gen(function* () {
-      const { sql } = yield* fixture;
-      const collect = yield* makeHandoffTestCollector;
-      const locked = yield* Deferred.make<void>();
-      const holder = yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* Deferred.succeed(locked, undefined);
-            return yield* Effect.never;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(locked);
-      const collection = yield* collect(ThreadId.make("t"), null).pipe(Effect.forkChild);
-      yield* TestClock.adjust("2 seconds");
-      const result = yield* Fiber.join(collection);
-      assert.strictEqual(result.state, "unavailable");
-      if (result.state === "unavailable") assert.strictEqual(result.code, "timed_out");
-      yield* Fiber.interrupt(holder);
-    }),
-  );
-  it.effect(
-    "attaches only bounded recent thread evidence, including uncertain runs and changed checkout paths",
-    () =>
-      Effect.gen(function* () {
-        const { runs, sql, root } = yield* fixture;
-        const original = yield* runs.run(input("original", "process.exit(6)"), "actor");
-        for (let i = 0; i < 5; i++) {
-          const receipt: TestRunReceipt = {
-            ...original,
-            input: {
-              ...original.input,
-              requestId: `r${i}`,
-              command: i === 4 ? "x".repeat(300) : "node",
-              args: ["secret-argument"],
-              threadId: ThreadId.make(i === 0 ? "foreign" : "t"),
-            },
-            reservedAt: `1969-12-31T23:59:0${i}.000Z`,
-            deadlineAt: "1969-12-31T23:59:09.000Z",
-            state: i === 4 ? "running" : "completed",
-          };
-          const json = yield* encodeReceipt(receipt);
-          yield* sql`INSERT INTO test_runs VALUES(${receipt.input.requestId},'{}',${root},0,${json})`;
-        }
-        // Remove the real fixture run so ordering exercises only the controlled timestamps.
-        yield* sql`DELETE FROM test_runs WHERE request_id='original'`;
-        const collect = yield* makeHandoffTestCollector;
-        const evidence = yield* collect(ThreadId.make("t"), "/changed-checkout");
-        assert.strictEqual(evidence.state, "collected");
-        if (evidence.state !== "collected") return;
-        assert.deepEqual(
-          evidence.items.map((item) => item.requestId),
-          ["r4", "r3", "r2"],
-        );
-        assert.isTrue(evidence.hasMore);
-        assert.strictEqual(evidence.items[0]?.state, "outcome_unknown");
-        assert.strictEqual(evidence.items[0]?.command, null);
-        assert.strictEqual(evidence.items[0]?.checkoutPathMatchesPreparation, false);
-        assert.strictEqual(evidence.items[1]?.exitCode, 6);
-        assert.strictEqual(evidence.currentValidity, "unknown");
-        const rendered = renderHandoffTestEvidence(evidence);
-        assert.notInclude(rendered, "secret-argument");
-        assert.notInclude(rendered, "foreign");
-        assert.include(rendered, "Current validity is unknown");
-        assert.isBelow(rendered.length, 8000);
-        const plan = yield* sql<{
-          detail: string;
-        }>`EXPLAIN QUERY PLAN SELECT receipt_json FROM test_runs WHERE json_extract(receipt_json,'$.input.threadId')='t' ORDER BY json_extract(receipt_json,'$.reservedAt') DESC, request_id DESC LIMIT 4`;
-        assert.isTrue(plan.some((row) => row.detail.includes("test_runs_thread_recent")));
-        const empty = yield* collect(ThreadId.make("missing"), null);
-        assert.deepEqual(empty.state === "collected" ? empty.items : null, []);
-      }),
-  );
-  it.effect("reports unreadable evidence instead of claiming no tests", () =>
-    Effect.gen(function* () {
-      const { runs, sql } = yield* fixture;
-      yield* runs.run(input("malformed"), "actor");
-      yield* sql`UPDATE test_runs SET receipt_json=json_set(receipt_json,'$.state','invalid') WHERE request_id='malformed'`;
-      const collect = yield* makeHandoffTestCollector;
-      const result = yield* collect(ThreadId.make("t"), null);
-      assert.strictEqual(result.state, "unavailable");
-      if (result.state === "unavailable") assert.strictEqual(result.code, "read_failed");
-    }),
-  );
   it.effect("does not lose an observed exit when the after fingerprint is interrupted", () =>
     Effect.gen(function* () {
       yield* fixture;

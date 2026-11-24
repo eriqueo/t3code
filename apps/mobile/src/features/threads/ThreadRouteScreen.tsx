@@ -80,7 +80,7 @@ import {
   resolvePreferredThreadWorktreePath,
   stagePendingTerminalLaunch,
 } from "../terminal/terminalLaunchContext";
-import { CompactHandoffCard } from "./CompactHandoffCard";
+import { StartFreshCard } from "./StartFreshCard";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
@@ -997,8 +997,8 @@ function ThreadRouteContent(
 
       <>
         <ThreadScreenBinding
-          contextHandoffCard={
-            <CompactHandoffCard
+          startFreshCard={
+            <StartFreshCard
               environmentId={selectedThread.environmentId}
               projection={selectedThreadDetail}
               snapshotCurrent={selectedThreadDetailState.status === "live"}

@@ -336,7 +336,7 @@ import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullReq
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
-import { useCompactHandoff } from "./chat/useCompactHandoff";
+import { useStartFreshOffer } from "./chat/useStartFreshOffer";
 import { useThreadSectionPickerStore } from "../threadSections";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
@@ -2629,7 +2629,7 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
-  const compactHandoffBanner = useCompactHandoff({
+  const startFreshBanner = useStartFreshOffer({
     environmentId,
     projection: serverProjection,
     snapshotCurrent: threadSyncPhase === null,
@@ -2637,7 +2637,7 @@ export default function ChatView(props: ChatViewProps) {
     usedTokens: activeContextWindow?.usedTokens ?? null,
   });
   const composerBannerItems = (() => {
-    const compactHandoffItems = compactHandoffBanner === null ? [] : [compactHandoffBanner];
+    const startFreshItems = startFreshBanner === null ? [] : [startFreshBanner];
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
       draftDefaultModelSelection ??
@@ -2705,7 +2705,7 @@ export default function ChatView(props: ChatViewProps) {
         ...projectCloneItems,
         ...freshSessionItems,
         ...systemComposerBannerItems,
-        ...compactHandoffItems,
+        ...startFreshItems,
       ];
     }
     return [
@@ -2717,7 +2717,7 @@ export default function ChatView(props: ChatViewProps) {
       ...projectCloneItems,
       ...freshSessionItems,
       ...systemComposerBannerItems,
-      ...compactHandoffItems,
+      ...startFreshItems,
       branchMismatchBannerItem({
         mismatchKey: activeBranchMismatchKey,
         mismatch: localCheckoutBranchMismatch,

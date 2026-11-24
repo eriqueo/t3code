@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - SHA-256 fingerprints follow the Node filesystem observation adapter.
 import * as NodeCrypto from "node:crypto";
-import { HandoffWorkspaceObservation } from "@t3tools/contracts";
+import { IsoDateTime, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,11 +8,40 @@ import * as Schema from "effect/Schema";
 import { ProcessRunner } from "../processRunner.ts";
 import { checkoutInspectionEnvironment, makeCheckoutInspector } from "./LogicalProjects.ts";
 
+const ObservationBase = {
+  version: Schema.Literal(1),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime,
+};
+// The digest identifies porcelain status, not file contents or test validity.
+const HandoffWorkspaceObservation = Schema.Union([
+  Schema.Struct({
+    ...ObservationBase,
+    state: Schema.Literal("observed"),
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    commonDirectory: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    branch: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(1_024))),
+    head: Schema.NullOr(Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))),
+    dirty: Schema.Boolean,
+    statusDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  }),
+  Schema.Struct({
+    ...ObservationBase,
+    state: Schema.Literal("unavailable"),
+    code: Schema.Literals([
+      "invalid_checkout",
+      "inspection_failed",
+      "changed_during_observation",
+      "timed_out",
+    ]),
+  }),
+]);
+type HandoffWorkspaceObservation = typeof HandoffWorkspaceObservation.Type;
+
 const decodeObservation = Schema.decodeUnknownEffect(HandoffWorkspaceObservation);
 type UnavailableCode = Extract<HandoffWorkspaceObservation, { state: "unavailable" }>["code"];
 
-// Separate from the checkpoint copier: observing Git must never require DX2 or
-// alter the frontier-authored body. This is evidence, not an execution lease.
+// Read-only Git evidence for test-run fingerprints, not an execution lease.
 export const makeHandoffWorkspaceObserver = Effect.gen(function* () {
   const inspect = yield* makeCheckoutInspector;
   const runner = yield* ProcessRunner;

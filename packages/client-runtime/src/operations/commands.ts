@@ -12,7 +12,6 @@ import {
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
-  type OrchestrationV2CompactHandoffCommand,
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
@@ -45,7 +44,6 @@ import {
   getInitialServerConfig,
   isRpcClientError,
   request,
-  requestGuarded,
 } from "../rpc/client.ts";
 
 interface CommandMetadata {
@@ -293,10 +291,7 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 });
 
 const dispatch = (command: OrchestrationV2Command) =>
-  requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
-
-export type ThreadHandoffCommand = OrchestrationV2CompactHandoffCommand;
-export const dispatchThreadHandoff = (command: ThreadHandoffCommand) => dispatch(command);
+  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
 // The socket can close after the server accepted the frame but before it answered.
 // The server replays an accepted commandId from its receipt, so the same command

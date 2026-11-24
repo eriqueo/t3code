@@ -230,16 +230,6 @@ export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<Orc
   }
 }
 
-/** Clients older than the retirement still send thread.handoff.prepare and thread.handoff.start. */
-export class OrchestratorContextHandoffRetiredError extends Schema.TaggedError<OrchestratorContextHandoffRetiredError>()(
-  "OrchestratorContextHandoffRetiredError",
-  { commandId: CommandId, commandType: Schema.String },
-) {
-  override get message(): string {
-    return "Start fresh's transcript handoff is retired; start a new thread.";
-  }
-}
-
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
   { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -376,7 +366,6 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorThreadAlreadyExistsError,
-  OrchestratorContextHandoffRetiredError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
@@ -629,10 +618,6 @@ export function threadHasUnfinishedWork(records: {
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
-    case "thread.handoff.prepare":
-    case "thread.handoff.complete":
-    case "thread.handoff.dismiss":
-    case "thread.handoff.start":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":
@@ -14926,77 +14911,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
-  // Preparation and start are retired; complete settles requests persisted before the upgrade, and
-  // dismiss lets an older client clear its banner.
-  const dispatchCompactHandoff = Effect.fn("orchestrationV2.dispatch.compactHandoff")(function* (
-    command: Extract<
-      OrchestrationV2ServerCommand,
-      { readonly type: "thread.handoff.complete" | "thread.handoff.dismiss" }
-    >,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) {
-    const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-    const thread = projection.thread;
-    const latestUser = projection.messages.findLast(
-      (message) => message.role === "user" && !message.streaming,
-    );
-    const current = thread.compactHandoff;
-    const reject = (cause: string) =>
-      new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause,
-      });
-    const idle =
-      !projection.runs.some((run) =>
-        ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
-      ) && !projection.runtimeRequests.some((request) => request.status === "pending");
-    const now = yield* DateTime.now;
-    const update = (compactHandoff: NonNullable<OrchestrationV2AppThread["compactHandoff"]>) =>
-      emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: thread.id,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: { ...thread, compactHandoff, updatedAt: now },
-      });
-    if (command.type === "thread.handoff.complete") {
-      // Late results never replace a newer decision or conversation revision.
-      if (
-        thread.archivedAt !== null ||
-        thread.deletedAt !== null ||
-        latestUser?.id !== command.payload.sourceMessageId ||
-        current?.state !== "requested" ||
-        current.requestId !== command.payload.requestId
-      )
-        return;
-      if (!idle)
-        return yield* update({
-          state: "failed",
-          requestId: current.requestId,
-          sourceMessageId: current.sourceMessageId,
-          code: "conversation_busy",
-          detail:
-            "The conversation resumed during handoff preparation. Prepare a new handoff after it settles.",
-        });
-      return yield* update(command.payload);
-    }
-    if (
-      latestUser?.id !== command.sourceMessageId ||
-      current?.sourceMessageId !== command.sourceMessageId ||
-      (current.state !== "requested" && current.state !== "ready" && current.state !== "failed")
-    )
-      return yield* reject("There is no current handoff to dismiss.");
-    return yield* update({
-      state: "dismissed",
-      requestId: current.requestId,
-      sourceMessageId: command.sourceMessageId,
-    });
-  });
-
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId>,
@@ -15028,16 +14942,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
-      case "thread.handoff.prepare":
-      case "thread.handoff.start":
-        return yield* new OrchestratorContextHandoffRetiredError({
-          commandId: command.commandId,
-          commandType: command.type,
-        });
-      case "thread.handoff.complete":
-      case "thread.handoff.dismiss":
-        yield* dispatchCompactHandoff(command, events);
-        break;
       case "thread.create": {
         yield* dispatchThreadCreate(command, events);
         const initialMessage = threadCreateInitialMessage(command);
@@ -15545,7 +15449,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
-          command.type === "thread.handoff.complete" ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
           // A stale visit changes no read state.
@@ -15772,13 +15675,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    if (command.type === "thread.handoff.start") {
-      const ids = Array.from(new Set([command.threadId, command.targetThreadId])).sort();
-      return yield* ids.reduceRight(
-        (operation, id) => threadDispatch.withLock(id, operation),
-        dispatchWithReceiptEffect(command),
-      );
-    }
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),

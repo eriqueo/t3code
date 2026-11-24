@@ -83,16 +83,10 @@ function makeParentThread(): OrchestrationV2AppThread {
   };
 }
 
-it("resets a subagent child's snooze, title job, handoff and remote delegation but keeps its workspace", () => {
+it("resets a subagent child's snooze, title job and remote delegation but keeps its workspace", () => {
   const parentThread: OrchestrationV2AppThread = {
     ...makeParentThread(),
     titleRegeneration: { requestId: CommandId.make("command:parent-title"), startedAt: snoozedAt },
-    // The parent's Start-fresh state is keyed to the parent's messages; a child never shares it.
-    compactHandoff: {
-      state: "requested",
-      requestId: CommandId.make("command:parent-handoff"),
-      sourceMessageId: MessageId.make("message:parent-latest-user"),
-    },
     delegatedFrom: {
       environmentId: EnvironmentId.make("linked-environment"),
       threadId: ThreadId.make("linked-parent"),
@@ -118,7 +112,6 @@ it("resets a subagent child's snooze, title job, handoff and remote delegation b
   assert.isNull(childThread.snoozedAt);
   assert.isNull(childThread.titleRegeneration);
   assert.isUndefined(childThread.delegatedFrom);
-  assert.isUndefined(childThread.compactHandoff);
   assert.equal(childThread.projectId, parentThread.projectId);
   assert.equal(childThread.runtimeMode, parentThread.runtimeMode);
   assert.equal(childThread.interactionMode, parentThread.interactionMode);

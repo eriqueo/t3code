@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import {
   WS_METHODS,
-  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -63,8 +62,6 @@ import {
   updateThreadMetadata,
   visitThread,
   watchThreadPullRequest,
-  dispatchThreadHandoff,
-  type ThreadHandoffCommand,
 } from "../operations/commands.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -78,7 +75,6 @@ export type LoadEarlierThreadHistoryInput = {
 };
 
 export type {
-  ThreadHandoffCommand,
   ArchiveThreadInput,
   CancelQueuedRunInput,
   CreateThreadInput,
@@ -195,13 +191,6 @@ export function createThreadEnvironmentAtoms<R, E>(
   });
 
   const sent = {
-    handoff: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:commands:thread:handoff",
-      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-      execute: (input: ThreadHandoffCommand) => dispatchThreadHandoff(input),
-      scheduler,
-      concurrency,
-    }),
     armTitleRegeneration: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:regenerate-title",
       execute: armTitleRegeneration,

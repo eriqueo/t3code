@@ -1,9 +1,4 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
-import {
-  ThreadHandoffActivityPayload,
-  ThreadHandoffReadyActivityPayload,
-  ThreadHandoffFailedActivityPayload,
-} from "./contextHandoff.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -474,7 +469,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
-  compactHandoff: Schema.optional(Schema.NullOr(ThreadHandoffActivityPayload)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -3089,33 +3083,7 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
-export const OrchestrationV2CompactHandoffCommand = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("thread.handoff.prepare"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    sourceMessageId: MessageId,
-    retry: Schema.optional(Schema.Boolean),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.handoff.dismiss"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    sourceMessageId: MessageId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.handoff.start"),
-    ...OrchestrationV2CreationFields,
-    commandId: CommandId,
-    threadId: ThreadId,
-    requestId: CommandId,
-    targetThreadId: ThreadId,
-  }),
-]);
-export type OrchestrationV2CompactHandoffCommand = typeof OrchestrationV2CompactHandoffCommand.Type;
-
 export const OrchestrationV2Command = Schema.Union([
-  OrchestrationV2CompactHandoffCommand,
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
     commandId: CommandId,
@@ -3664,12 +3632,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
     type: Schema.Literal("thread.pull-request-watch.checks-reopen"),
     commandId: CommandId,
     threadId: ThreadId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.handoff.complete"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    payload: Schema.Union([ThreadHandoffReadyActivityPayload, ThreadHandoffFailedActivityPayload]),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

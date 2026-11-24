@@ -94,7 +94,6 @@ it.effect.each([
         Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
         Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitles.ThreadTitleRegenerationService)({}),
-        Layer.mock(ContextHandoffPreparationService.ContextHandoffPreparationService)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           recoverDelegatedTask: () => Effect.void,
         }),
@@ -139,4 +138,3 @@ it.effect.each([
     else assert.equal(captured.lastError, null);
   }).pipe(Effect.provide(Layer.fresh(worker)));
 });
-import * as ContextHandoffPreparationService from "./ContextHandoffPreparationService.ts";

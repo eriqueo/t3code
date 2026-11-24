@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./contextHandoff": {
-      "types": "./src/contextHandoff.ts",
-      "import": "./src/contextHandoff.ts"
+    "./startFresh": {
+      "types": "./src/startFresh.ts",
+      "import": "./src/startFresh.ts"
     },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",

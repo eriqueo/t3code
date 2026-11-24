@@ -11,7 +11,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 import { ProcessRunner, ProcessOutputLimitError, layer as processLayer } from "../processRunner.ts";
 import { makeHandoffWorkspaceObserver } from "./HandoffWorkspace.ts";
-import { renderHandoffWorkspaceObservation } from "@t3tools/shared/contextHandoff";
 
 it.layer(processLayer.pipe(Layer.provideMerge(NodeServices.layer)))("handoff workspace", (it) => {
   it.effect(
@@ -84,8 +83,8 @@ it.layer(processLayer.pipe(Layer.provideMerge(NodeServices.layer)))("handoff wor
         if (dirty.state !== "observed") return;
         assert.isTrue(dirty.dirty);
         assert.notStrictEqual(dirty.statusDigest, clean.statusDigest);
-        assert.notInclude(renderHandoffWorkspaceObservation(dirty), "not included in receipt");
-        assert.notInclude(renderHandoffWorkspaceObservation(dirty), "private-file");
+        assert.notInclude(JSON.stringify(dirty), "not included in receipt");
+        assert.notInclude(JSON.stringify(dirty), "private-file");
         yield* git(cwd, ["worktree", "add", "-b", "child", `${root}/child`]);
         const child = yield* observe(`${root}/child`);
         assert.strictEqual(child.state, "observed");
@@ -178,7 +177,7 @@ it.layer(processLayer.pipe(Layer.provideMerge(NodeServices.layer)))("handoff wor
               : "inspection_failed",
         );
       assert.strictEqual(statusCalls, failure === "changed" || failure === "malformed" ? 2 : 1);
-      assert.notInclude(renderHandoffWorkspaceObservation(observation), "private diagnostics");
+      assert.notInclude(JSON.stringify(observation), "private diagnostics");
     }),
   );
 });

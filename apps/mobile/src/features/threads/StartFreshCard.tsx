@@ -13,7 +13,7 @@ import {
   routeStartFresh,
   trackerFailureText,
 } from "@t3tools/client-runtime/tracker-start";
-import { shouldOfferStartFresh } from "@t3tools/shared/contextHandoff";
+import { shouldOfferStartFresh } from "@t3tools/shared/startFresh";
 import * as DateTime from "effect/DateTime";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -26,7 +26,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 /** Offers Start fresh on an expensive conversation that has sat idle. */
-export function CompactHandoffCard(props: {
+export function StartFreshCard(props: {
   readonly environmentId: EnvironmentId;
   readonly projection: OrchestrationV2ThreadProjection | null;
   readonly snapshotCurrent: boolean;
@@ -51,10 +51,6 @@ export function CompactHandoffCard(props: {
   if (!projection || !source) return null;
   const { thread } = projection;
   const key = JSON.stringify([environmentId, thread.id, source.id]);
-  // Decisions recorded before the transcript handoff retired still close the offer.
-  const decided =
-    thread.compactHandoff?.sourceMessageId === source.id &&
-    (thread.compactHandoff.state === "dismissed" || thread.compactHandoff.state === "started");
   const working = projection.runs.some((run) =>
     ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
   );
@@ -69,7 +65,6 @@ export function CompactHandoffCard(props: {
     thread.providerInstanceId !== REVIEW_PROVIDER_INSTANCE_ID &&
     thread.archivedAt === null &&
     thread.deletedAt === null &&
-    !decided &&
     dismissed !== key &&
     shouldOfferStartFresh({
       snapshotCurrent: props.snapshotCurrent,

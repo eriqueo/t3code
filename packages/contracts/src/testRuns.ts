@@ -78,42 +78,6 @@ export const TestRunReceipt = Schema.Struct({
   releasedBy: Schema.NullOr(Schema.String.check(Schema.isMaxLength(256))),
 });
 export type TestRunReceipt = typeof TestRunReceipt.Type;
-export const HANDOFF_TEST_RECEIPT_LIMIT = 3;
-export const HANDOFF_TEST_COMMAND_MAX_LENGTH = 256;
-export const HandoffTestReceipt = Schema.Struct({
-  requestId: Id,
-  command: Schema.NullOr(Schema.String.check(Schema.isMaxLength(HANDOFF_TEST_COMMAND_MAX_LENGTH))),
-  reservedAt: IsoDateTime,
-  exitedAt: TestRunReceipt.fields.exitedAt,
-  state: TestRunReceipt.fields.state,
-  exitCode: TestRunReceipt.fields.exitCode,
-  reason: TestRunReceipt.fields.reason,
-  revisionValidity: TestRunReceipt.fields.revisionValidity,
-  checkoutPathMatchesPreparation: Schema.NullOr(Schema.Boolean),
-  beforeDigest: Schema.NullOr(Digest),
-  afterDigest: Schema.NullOr(Digest),
-  beforeHead: TestWorkspaceFingerprint.members[0].fields.head,
-  afterHead: TestWorkspaceFingerprint.members[0].fields.head,
-});
-export type HandoffTestReceipt = typeof HandoffTestReceipt.Type;
-export const HandoffTestEvidence = Schema.Union([
-  Schema.Struct({
-    version: Schema.Literal(1),
-    state: Schema.Literal("collected"),
-    collectedAt: IsoDateTime,
-    sourceThreadId: ThreadId,
-    currentValidity: Schema.Literal("unknown"),
-    items: Schema.Array(HandoffTestReceipt).check(Schema.isMaxLength(HANDOFF_TEST_RECEIPT_LIMIT)),
-    hasMore: Schema.Boolean,
-  }),
-  Schema.Struct({
-    version: Schema.Literal(1),
-    state: Schema.Literal("unavailable"),
-    collectedAt: IsoDateTime,
-    code: Schema.Literals(["read_failed", "timed_out"]),
-  }),
-]);
-export type HandoffTestEvidence = typeof HandoffTestEvidence.Type;
 export class TestRunError extends Schema.TaggedError<TestRunError>()(
   "TestRunError",
   {
