@@ -4,6 +4,7 @@ import type {
   TrackerPhase,
   TrackerPortfolio,
   TrackerProgress,
+  TrackerWatch,
   TrackerWorkDetail,
   TrackerWorkSummary,
 } from "@t3tools/contracts";
@@ -132,10 +133,12 @@ export function currentPhase(phases: ReadonlyArray<TrackerPhase>): TrackerPhase 
  */
 export type TrackerActionId =
   | "next-step"
-  | "update-roadmap"
+  | "tidy"
   | "handoff"
   | "grill"
   | "prove-it"
+  | "status"
+  | "wait-what"
   | "close-out";
 
 export interface TrackerAction {
@@ -147,14 +150,16 @@ export interface TrackerAction {
 
 const PROJECT_ACTIONS: ReadonlyArray<TrackerAction> = [
   { id: "next-step", label: "Next Step", confirm: false },
-  { id: "update-roadmap", label: "Update Roadmap", confirm: false },
+  { id: "tidy", label: "Tidy", confirm: false },
   { id: "handoff", label: "Handoff", confirm: false },
   { id: "grill", label: "Grill the Plan", confirm: false },
   { id: "prove-it", label: "Prove It", confirm: false },
+  { id: "status", label: "Status", confirm: false },
+  { id: "wait-what", label: "Wait, What?", confirm: false },
   { id: "close-out", label: "Close Out", confirm: true },
 ];
 
-const PROJECT_ONLY = new Set<TrackerActionId>(["update-roadmap", "handoff"]);
+const PROJECT_ONLY = new Set<TrackerActionId>(["tidy", "handoff"]);
 
 /**
  * A record without phases has no roadmap and needs no handoff, so it gets neither
@@ -194,11 +199,25 @@ export function trackerActionMessage(
   if (id === "prove-it") {
     return `Use prove-it on your latest substantive result in this conversation: the last plan, diagnosis, findings, report or code change you gave, not a status note or your reply to this message. Name that target in one sentence, then start the review. If a newer message from Eric changed the subject, say which result you would review and ask first (record \`${workId}\`, thread \`${threadId}\`).`;
   }
-  const action = `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
-  // A tidy keeps the project open, so it rides with the roadmap update rather than Close Out.
-  return id === "update-roadmap"
-    ? `${action} Then use project-tidy: remove finished scratch, stale files and merged branches, and bring the plan, handoff and tracker record up to date.`
-    : action;
+  // Status and Wait, What? are for Eric's understanding: no skill, no work, no brief.
+  if (id === "status") {
+    return `Where is record \`${workId}\` now? Read its record and handoff, nothing else, and answer in plain English: what is done, what is happening now, what is blocked and on whom, and anything you need from me. Do no new work and change nothing.`;
+  }
+  if (id === "wait-what") {
+    return "Wait, that last message did not land. Re-pitch it: one or two sentences of context first, then what you found or did and what you need from me, in plain English with no jargon, ids or hashes. Do no new work.";
+  }
+  return `Use project-tracker: sidebar action \`${id}\` on record \`${workId}\` from thread \`${threadId}\`.`;
+}
+
+/** One line for a watch: what it waits for is its title, this is where it stands. */
+export function watchStateLabel(
+  watch: Pick<TrackerWatch, "snoozedUntil" | "delivery">,
+  formatTime: (iso: string) => string,
+): string {
+  if (watch.delivery === "pending") return "Fired · waking the agent";
+  if (watch.delivery === "failed") return "Fired · the wake failed, retrying";
+  if (watch.snoozedUntil !== null) return `Snoozed until ${formatTime(watch.snoozedUntil)}`;
+  return "Watching · checked every 15 minutes";
 }
 
 export function phaseStatusLabel(phase: Pick<TrackerPhase, "status" | "wait">): string {

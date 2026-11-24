@@ -16,6 +16,7 @@ vi.mock("~/state/server", () => ({
     trackerLaunchPrompt: {},
     trackerAnswerCard: { permissionAtom: () => null },
     trackerDoneDeciding: {},
+    trackerUpdateWatch: {},
   },
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => command }));
@@ -45,6 +46,7 @@ const baseWork: TrackerWorkDetail = {
   docs: [],
   needsReview: null,
   trains: [],
+  watches: [],
   thread: null,
   handoff: { waiting: false, at: null, delivery: null, reason: null },
 };
@@ -83,6 +85,40 @@ it("says which release train the work waits for, with its check (tracker K8)", a
   );
   await expect.element(page.getByText("Waiting for the train: nixos (2 waiting)")).toBeVisible();
   await expect.element(page.getByText("systemctl is-active hwc-tracker")).toBeVisible();
+});
+
+it("lists what the agent waits for and snoozes a watch from the sidebar", async () => {
+  command.mockClear();
+  const work: TrackerWorkDetail = {
+    ...baseWork,
+    watches: [
+      {
+        id: "pr-acme-widgets-7",
+        repo: "Acme/widgets",
+        number: 7,
+        note: "then run the live test",
+        snoozedUntil: null,
+        delivery: null,
+      },
+    ],
+  };
+  await using screen = await render(
+    <TrackerWorkView
+      environmentId={EnvironmentId.make("local")}
+      work={work}
+      density="panel"
+      domainColour={null}
+      domainLabel={null}
+    />,
+  );
+  await expect.element(page.getByText(/^Acme\/widgets#7 to merge/)).toBeVisible();
+  await expect.element(page.getByText(/Watching · checked every 15 minutes/)).toBeVisible();
+  await expect.element(page.getByText(/then run the live test/)).toBeVisible();
+  await screen.getByRole("button", { name: "Snooze 1 Day" }).click();
+  expect(command).toHaveBeenCalledWith({
+    environmentId: "local",
+    input: { workId: "work-1", watch: "pr-acme-widgets-7", action: "snooze-day" },
+  });
 });
 
 it("answers a decision in T3, naming the card as Eric read it", async () => {

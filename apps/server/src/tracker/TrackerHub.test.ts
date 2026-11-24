@@ -466,6 +466,75 @@ describe("TrackerHub", () => {
     assert.strictEqual(read(null), null);
   });
 
+  it("carries the record's watches, with a snooze only while it holds", () => {
+    // Shape of the hub's project view `watches` (tracker cd20697).
+    const watch = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      kind: "pr-merged",
+      repo: "Acme/widgets",
+      number: 7,
+      note: "then test",
+      host: "hwc-work",
+      at: "2026-11-24T12:00:00-07:00",
+      snoozedUntil: "2026-11-25T12:00:00-07:00",
+      snoozed: false,
+      delivery: null,
+      ...extra,
+    });
+    const work = TrackerHub.workFromHub(
+      {
+        project: "p",
+        watches: [
+          watch("a", {}),
+          watch("b", { snoozed: true }),
+          watch("c", { delivery: "failed" }),
+        ],
+      },
+      context,
+    );
+    assert.deepStrictEqual(
+      work?.watches.map((entry) => [entry.id, entry.snoozedUntil, entry.delivery]),
+      [
+        // A snooze that has run out is not shown as one.
+        ["a", null, null],
+        ["b", "2026-11-25T12:00:00-07:00", null],
+        ["c", null, "failed"],
+      ],
+    );
+    assert.deepStrictEqual(TrackerHub.workFromHub({ project: "p" }, context)?.watches, []);
+  });
+
+  it.effect("snoozes and cancels a watch through the hub's watch routes", () => {
+    const hub = hubWith({
+      "GET /api/projects/t3-tracker": () => Response.json(project(null)),
+      "POST /api/v1/watches/t3-tracker/snooze": () => Response.json({ schemaVersion: 1 }),
+      "DELETE /api/v1/watches/t3-tracker": () => Response.json({ schemaVersion: 1 }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "snooze-week" });
+      yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "resume" });
+      yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "cancel" });
+      const writes = hub.sent.filter((request) => request.method !== "GET");
+      assert.deepStrictEqual(
+        writes.map((request) => [request.method, request.url, request.body]),
+        [
+          [
+            "POST",
+            "/api/v1/watches/t3-tracker/snooze",
+            { schemaVersion: 1, watch: "w1", hours: 168 },
+          ],
+          [
+            "POST",
+            "/api/v1/watches/t3-tracker/snooze",
+            { schemaVersion: 1, watch: "w1", hours: 0 },
+          ],
+          ["DELETE", "/api/v1/watches/t3-tracker", { schemaVersion: 1, watch: "w1" }],
+        ],
+      );
+    }).pipe(Effect.provide(hub.layer));
+  });
+
   const seenLayout = { id: "1", status: "open", title: "Layout", ask: "Choose", comments: 0 };
 
   it.effect("answers a card on the hub's current revision", () => {

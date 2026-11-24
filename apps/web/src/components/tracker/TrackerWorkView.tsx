@@ -3,12 +3,18 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, TrackerWorkDetail } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  TrackerUpdateWatchInput,
+  TrackerWatch,
+  TrackerWorkDetail,
+} from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, FileTextIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { cn } from "~/lib/utils";
 import { useProjects, useThreadShell } from "~/state/entities";
@@ -30,6 +36,7 @@ import {
   trackerDocUrl,
   trackerSummary,
   resumableThreadId,
+  watchStateLabel,
   workStatus,
   type TrackerTone,
 } from "./tracker.logic";
@@ -88,6 +95,101 @@ function Section(props: { title: string; children: ReactNode }) {
       <h3 className="border-border border-b pb-1 font-serif text-base">{props.title}</h3>
       {props.children}
     </section>
+  );
+}
+
+const watchTime = (iso: string) =>
+  new Date(iso).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+/**
+ * What the agent waits on outside the hub (tracker watches). The hub host checks each
+ * one and wakes this record's conversation; Eric can hold the wake or drop the watch.
+ */
+function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWorkDetail }) {
+  const update = useAtomCommand(serverEnvironment.trackerUpdateWatch, { reportFailure: false });
+  const [pending, setPending] = useState<string | null>(null);
+
+  const act = async (watch: TrackerWatch, action: TrackerUpdateWatchInput["action"]) => {
+    if (action === "cancel") {
+      const approved = await requestConfirmDialog(
+        `Stop waiting for ${watch.repo}#${watch.number}? The agent will not be woken.`,
+        { variant: "destructive" },
+      );
+      if (approved !== true) return;
+    }
+    setPending(watch.id);
+    const result = await update({
+      environmentId: props.environmentId,
+      input: { workId: props.work.id, watch: watch.id, action },
+    });
+    setPending(null);
+    if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({
+        type: "error",
+        title: "Not saved",
+        description: errorText(squashAtomCommandFailure(result)),
+      });
+    }
+  };
+
+  return (
+    <ul className="flex flex-col gap-3">
+      {props.work.watches.map((watch) => (
+        <li key={watch.id} className="flex flex-col gap-1.5" data-tracker-watch={watch.id}>
+          <p className="text-sm">
+            {`${watch.repo}#${watch.number} to merge`}
+            <span className="block text-muted-foreground text-xs">
+              {watchStateLabel(watch, watchTime)}
+              {watch.note ? ` · ${watch.note}` : ""}
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {watch.snoozedUntil !== null ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending !== null}
+                onClick={() => void act(watch, "resume")}
+              >
+                Resume
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={pending !== null}
+                  onClick={() => void act(watch, "snooze-day")}
+                >
+                  Snooze 1 Day
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={pending !== null}
+                  onClick={() => void act(watch, "snooze-week")}
+                >
+                  Snooze 1 Week
+                </Button>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="destructive-outline"
+              disabled={pending !== null}
+              onClick={() => void act(watch, "cancel")}
+            >
+              Cancel
+            </Button>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -398,6 +500,12 @@ export function TrackerWorkView(props: {
           <p className="text-muted-foreground text-sm">Every phase is done.</p>
         ) : null}
       </Section>
+
+      {work.watches.length > 0 ? (
+        <Section title="Waiting For">
+          <TrackerWatches environmentId={props.environmentId} work={work} />
+        </Section>
+      ) : null}
 
       {props.agentActions}
 

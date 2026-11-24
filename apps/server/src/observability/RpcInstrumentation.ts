@@ -100,6 +100,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.trackerLinkThread]: "tracker",
   [WS_METHODS.trackerAnswerCard]: "tracker",
   [WS_METHODS.trackerDoneDeciding]: "tracker",
+  [WS_METHODS.trackerUpdateWatch]: "tracker",
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",
   [WS_METHODS.serverReportClientActivity]: "server",

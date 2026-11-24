@@ -160,6 +160,22 @@ export const TrackerTrainWait = Schema.Struct({
 });
 export type TrackerTrainWait = typeof TrackerTrainWait.Type;
 
+/**
+ * Something outside the hub the work's agent waits on (tracker watches): today a pull
+ * request merging. The hub host checks it and wakes the linked conversation.
+ */
+export const TrackerWatch = Schema.Struct({
+  id: Schema.String,
+  repo: Schema.String,
+  number: Schema.Number,
+  note: Schema.String,
+  /** Set while snoozed: the hub holds the wake until then. */
+  snoozedUntil: Schema.NullOr(Schema.String),
+  /** After it fired: the wake's delivery, "pending" or "failed" (the hub retries). */
+  delivery: Schema.NullOr(Schema.String),
+});
+export type TrackerWatch = typeof TrackerWatch.Type;
+
 export const TrackerWorkDetail = Schema.Struct({
   host: Schema.String,
   hubUrl: Schema.String,
@@ -184,6 +200,8 @@ export const TrackerWorkDetail = Schema.Struct({
   needsReview: Schema.NullOr(Schema.Struct({ reasons: Schema.Array(Schema.String) })),
   /** Release trains the work is ready to ship on and still waits for; empty when none. */
   trains: Schema.Array(TrackerTrainWait),
+  /** What the agent waits on outside the hub; empty when nothing. */
+  watches: Schema.Array(TrackerWatch),
   /** The one conversation the hub delivers Eric's decisions to. */
   thread: Schema.NullOr(TrackerLinkedThread),
   /** Eric's last "Done deciding" and how its delivery went. */
@@ -237,6 +255,14 @@ export const TrackerDoneDecidingInput = Schema.Struct({
   cards: Schema.Array(TrackerCardSeen),
 });
 export type TrackerDoneDecidingInput = typeof TrackerDoneDecidingInput.Type;
+
+/** Eric's snooze, resume or cancel on one watch, as the hub's own page offers. */
+export const TrackerUpdateWatchInput = Schema.Struct({
+  workId: TrackerWorkId,
+  watch: Schema.String,
+  action: Schema.Literals(["snooze-day", "snooze-week", "resume", "cancel"]),
+});
+export type TrackerUpdateWatchInput = typeof TrackerUpdateWatchInput.Type;
 
 export class TrackerHubError extends Schema.TaggedError<TrackerHubError>()("TrackerHubError", {
   reason: Schema.Literals([

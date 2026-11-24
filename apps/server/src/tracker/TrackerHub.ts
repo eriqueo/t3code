@@ -9,6 +9,7 @@ import {
   type TrackerLinkedThread,
   type TrackerLinkThreadInput,
   type TrackerPortfolio,
+  type TrackerUpdateWatchInput,
   type TrackerWorkDetail,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -22,6 +23,9 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 const HUB_TIMEOUT = "8 seconds";
 const DEFAULT_HUB_URL = "http://hwc-work:8765";
 // Records the hub will not change again; the Tracker shows work that can still move.
+/** The hub's snooze in hours for each button; 0 resumes. */
+const WATCH_SNOOZE_HOURS = { "snooze-day": 24, "snooze-week": 168, resume: 0 } as const;
+
 const TERMINAL_STATUSES = new Set(["complete", "archived", "superseded", "dropped", "retired"]);
 
 export class TrackerHub extends Context.Service<
@@ -44,6 +48,10 @@ export class TrackerHub extends Context.Service<
     /** Eric's "Done deciding": the hub queues his answers for the linked conversation. */
     readonly doneDeciding: (
       input: TrackerDoneDecidingInput,
+    ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
+    /** Eric's snooze, resume or cancel on a watch, as the hub's own page does. */
+    readonly updateWatch: (
+      input: TrackerUpdateWatchInput,
     ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
   }
 >()("t3/tracker/TrackerHub") {}
@@ -306,6 +314,18 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
         check: text(entry.check),
         waiting: count(entry.waiting),
       })),
+    // Tracker watches: the hub lists those not yet done. A hub without them sends none.
+    watches: list(work.watches)
+      .map(record)
+      .filter((entry) => text(entry.id) !== "")
+      .map((entry) => ({
+        id: text(entry.id),
+        repo: text(entry.repo),
+        number: count(entry.number),
+        note: text(entry.note),
+        snoozedUntil: entry.snoozed === true ? textOrNull(entry.snoozedUntil) : null,
+        delivery: textOrNull(entry.delivery),
+      })),
     thread: linkedThreadFromHub(record(work.handoff).thread),
     handoff: handoffFromHub(work.handoff),
   };
@@ -447,11 +467,13 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
     return detail;
   });
 
-  // A POST that may have reached the hub is never retried blindly: the caller reloads.
-  const post = (path: string, body: unknown) =>
+  // A write that may have reached the hub is never retried blindly: the caller reloads.
+  const post = (path: string, body: unknown, method: "POST" | "DELETE" = "POST") =>
     client
       .execute(
-        HttpClientRequest.post(`${hubUrl}${path}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        (method === "DELETE" ? HttpClientRequest.delete : HttpClientRequest.post)(
+          `${hubUrl}${path}`,
+        ).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
       )
       .pipe(
         Effect.mapError(
@@ -635,6 +657,28 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
         {},
       ),
     ),
+    updateWatch: Effect.fn("TrackerHub.updateWatch")(function* (input) {
+      const base = `/api/v1/watches/${encodeURIComponent(input.workId)}`;
+      const reply =
+        input.action === "cancel"
+          ? yield* post(base, { schemaVersion: 1, watch: input.watch }, "DELETE")
+          : yield* post(`${base}/snooze`, {
+              schemaVersion: 1,
+              watch: input.watch,
+              hours: WATCH_SNOOZE_HOURS[input.action],
+            });
+      if (!reply.ok) {
+        const refusal = hubRefusal(reply.json);
+        return yield* new TrackerHubError({
+          reason: refusal.code === "no-such-watch" ? "notFound" : "refused",
+          detail:
+            refusal.code === "no-such-watch"
+              ? "That watch is already gone: it fired or was cancelled."
+              : `The tracker hub did not save it: ${refusal.detail || "no reason given"}.`,
+        });
+      }
+      return yield* work({ workId: input.workId });
+    }),
   });
 });
 

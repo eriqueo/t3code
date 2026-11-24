@@ -367,6 +367,7 @@ import {
   TrackerLinkedThread,
   TrackerLinkThreadInput,
   TrackerPortfolio,
+  TrackerUpdateWatchInput,
   TrackerWorkDetail,
 } from "./tracker.ts";
 import {
@@ -570,6 +571,7 @@ export const WS_METHODS = {
   trackerLinkThread: "tracker.linkThread",
   trackerAnswerCard: "tracker.answerCard",
   trackerDoneDeciding: "tracker.doneDeciding",
+  trackerUpdateWatch: "tracker.updateWatch",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1075,6 +1077,12 @@ const WsTrackerAnswerCardRpc = Rpc.make(WS_METHODS.trackerAnswerCard, {
 
 const WsTrackerDoneDecidingRpc = Rpc.make(WS_METHODS.trackerDoneDeciding, {
   payload: TrackerDoneDecidingInput,
+  success: TrackerWorkDetail,
+  error: trackerRpcError,
+});
+
+const WsTrackerUpdateWatchRpc = Rpc.make(WS_METHODS.trackerUpdateWatch, {
+  payload: TrackerUpdateWatchInput,
   success: TrackerWorkDetail,
   error: trackerRpcError,
 });
@@ -2233,6 +2241,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTrackerLinkThreadRpc,
   WsTrackerAnswerCardRpc,
   WsTrackerDoneDecidingRpc,
+  WsTrackerUpdateWatchRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,

@@ -19,6 +19,7 @@ import {
   trackerWhen,
   workMatchesQuery,
   workStatus,
+  watchStateLabel,
 } from "./tracker.logic";
 
 const work = (id: string, patch: Partial<TrackerWorkSummary> = {}): TrackerWorkSummary => ({
@@ -159,16 +160,20 @@ describe("tracker logic", () => {
     };
     expect(trackerActions(phased).map((action) => action.id)).toEqual([
       "next-step",
-      "update-roadmap",
+      "tidy",
       "handoff",
       "grill",
       "prove-it",
+      "status",
+      "wait-what",
       "close-out",
     ]);
     expect(trackerActions({ phases: [] }).map((action) => action.id)).toEqual([
       "next-step",
       "grill",
       "prove-it",
+      "status",
+      "wait-what",
       "close-out",
     ]);
     expect(
@@ -270,6 +275,21 @@ describe("tracker logic", () => {
     expect(trackerWhen("2026-11-18T10:01:33-07:00")).toBe("2026-11-18 10:01");
   });
 
+  it("says where a watch stands: fired first, then snoozed, else watching", () => {
+    const at = (iso: string) => `at ${iso}`;
+    const watching = { snoozedUntil: null, delivery: null };
+    expect(watchStateLabel(watching, at)).toBe("Watching · checked every 15 minutes");
+    expect(watchStateLabel({ ...watching, snoozedUntil: "2026-11-25T12:00" }, at)).toBe(
+      "Snoozed until at 2026-11-25T12:00",
+    );
+    expect(watchStateLabel({ snoozedUntil: "2026-11-25T12:00", delivery: "failed" }, at)).toBe(
+      "Fired · the wake failed, retrying",
+    );
+    expect(watchStateLabel({ ...watching, delivery: "pending" }, at)).toBe(
+      "Fired · waking the agent",
+    );
+  });
+
   it("finds work by its title or by the words of its id", () => {
     const record = work("work-memory-ownership", { title: "Single-owner work facts in tracker" });
     expect(workMatchesQuery(record, "")).toBe(true);
@@ -284,9 +304,18 @@ describe("tracker logic", () => {
     expect(trackerActionMessage("next-step", "t3-tracker", "thread-1")).toBe(
       "Use project-tracker: sidebar action `next-step` on record `t3-tracker` from thread `thread-1`.",
     );
-    expect(trackerActionMessage("update-roadmap", "t3-tracker", "thread-1")).toBe(
-      "Use project-tracker: sidebar action `update-roadmap` on record `t3-tracker` from thread `thread-1`. Then use project-tidy: remove finished scratch, stale files and merged branches, and bring the plan, handoff and tracker record up to date.",
+    expect(trackerActionMessage("tidy", "t3-tracker", "thread-1")).toBe(
+      "Use project-tracker: sidebar action `tidy` on record `t3-tracker` from thread `thread-1`.",
     );
+    // Status and Wait, What? ask for an explanation and no work, so they name no skill.
+    const status = trackerActionMessage("status", "t3-tracker", "thread-1");
+    expect(status).toContain("record `t3-tracker`");
+    expect(status).toContain("Do no new work and change nothing.");
+    expect(status).not.toContain("project-tracker");
+    const again = trackerActionMessage("wait-what", "t3-tracker", "thread-1");
+    expect(again).toContain("that last message did not land");
+    expect(again).toContain("Do no new work.");
+    expect(again).not.toContain("project-tracker");
     expect(trackerActionMessage("prove-it", "t3-tracker", "thread-1")).toBe(
       "Use prove-it on your latest substantive result in this conversation: the last plan, diagnosis, findings, report or code change you gave, not a status note or your reply to this message. Name that target in one sentence, then start the review. If a newer message from Eric changed the subject, say which result you would review and ask first (record `t3-tracker`, thread `thread-1`).",
     );

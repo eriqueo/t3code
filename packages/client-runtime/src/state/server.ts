@@ -1850,6 +1850,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:tracker-done-deciding",
       tag: WS_METHODS.trackerDoneDeciding,
     }),
+    trackerUpdateWatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-update-watch",
+      tag: WS_METHODS.trackerUpdateWatch,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

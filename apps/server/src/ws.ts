@@ -2714,6 +2714,7 @@ export const layerWsRpc = (
           trackerHub.linkThread(input).pipe(Effect.tap(() => trackerThreadTitles.sync)),
         [WS_METHODS.trackerAnswerCard]: (input) => trackerHub.answerCard(input),
         [WS_METHODS.trackerDoneDeciding]: (input) => trackerHub.doneDeciding(input),
+        [WS_METHODS.trackerUpdateWatch]: (input) => trackerHub.updateWatch(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),

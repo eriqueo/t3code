@@ -51,6 +51,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.trackerLinkThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerAnswerCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerDoneDeciding]: AuthOrchestrationOperateScope,
+  // A snooze or cancel decides when, or whether, an agent is woken.
+  [WS_METHODS.trackerUpdateWatch]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,
