@@ -180,33 +180,16 @@ export function deriveThreadHandoffState(
   return { state: "none" };
 }
 
-export function shouldPrepareThreadHandoff(input: {
+/** Start fresh is offered on an expensive conversation that has sat idle overnight. */
+export function shouldOfferStartFresh(input: {
   readonly snapshotCurrent: boolean;
-  readonly hasExplicitCheckpoint?: boolean;
   readonly nowMs: number;
   readonly latestMessageAt: string | null;
   readonly usedTokens: number | null;
-  readonly sessionStatus:
-    | "idle"
-    | "starting"
-    | "running"
-    | "ready"
-    | "interrupted"
-    | "stopped"
-    | "error"
-    | null;
-  readonly latestTurnState: "running" | "interrupted" | "completed" | "error" | null;
+  readonly working: boolean;
   readonly hasPendingRequest: boolean;
-  readonly handoffState: ThreadHandoffState["state"];
 }): boolean {
-  if (!input.snapshotCurrent) return false;
-  if (input.handoffState !== "none") return false;
-  if (input.hasPendingRequest) return false;
-  if (input.sessionStatus === "starting" || input.sessionStatus === "running") return false;
-  if (input.latestTurnState === "running") return false;
-  // An explicit frontier checkpoint is ready for transfer immediately after the
-  // turn settles; age and token thresholds apply only to automatic excerpts.
-  if (input.hasExplicitCheckpoint === true) return true;
+  if (!input.snapshotCurrent || input.working || input.hasPendingRequest) return false;
   if ((input.usedTokens ?? 0) < THREAD_HANDOFF_MIN_USED_TOKENS) return false;
 
   const latestMessageAt = Date.parse(input.latestMessageAt ?? "");

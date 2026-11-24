@@ -11,64 +11,12 @@ import {
   latestThreadUserMessageId,
   latestContextCheckpoint,
   threadHandoffSourceMessageId,
-  shouldPrepareThreadHandoff,
+  shouldOfferStartFresh,
 } from "./contextHandoff.ts";
 
 const SOURCE_MESSAGE_ID = MessageId.make("message-2");
 
 describe("context handoff policy", () => {
-  const freshCheckpointPolicy = {
-    snapshotCurrent: true,
-    nowMs: Date.parse("2026-09-12T08:00:01.000Z"),
-    latestMessageAt: "2026-09-12T08:00:00.000Z",
-    usedTokens: null,
-    sessionStatus: "idle" as const,
-    latestTurnState: "completed" as const,
-    hasPendingRequest: false,
-    handoffState: "none" as const,
-    hasExplicitCheckpoint: true,
-  };
-
-  it("prepares an explicit fresh checkpoint without token telemetry or an overnight wait", () => {
-    expect(shouldPrepareThreadHandoff(freshCheckpointPolicy)).toBe(true);
-    expect(shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, usedTokens: 10 })).toBe(true);
-    expect(
-      shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, hasExplicitCheckpoint: false }),
-    ).toBe(false);
-  });
-
-  it.each([
-    { snapshotCurrent: false },
-    { sessionStatus: "starting" as const },
-    { sessionStatus: "running" as const },
-    { latestTurnState: "running" as const },
-    { hasPendingRequest: true },
-    { handoffState: "requested" as const },
-    { handoffState: "ready" as const },
-    { handoffState: "failed" as const },
-    { handoffState: "dismissed" as const },
-    { handoffState: "started" as const },
-  ])("preserves handoff safety gates for explicit checkpoints (%j)", (gate) => {
-    expect(shouldPrepareThreadHandoff({ ...freshCheckpointPolicy, ...gate })).toBe(false);
-  });
-
-  it("requests malformed explicit checkpoints so the worker can report the failure", () => {
-    const checkpoint = latestContextCheckpoint([
-      {
-        role: "assistant",
-        streaming: false,
-        text: CONTEXT_CHECKPOINT_START_MARKER + "\nIncomplete",
-      },
-    ]);
-    expect(checkpoint.state).toBe("invalid");
-    expect(
-      shouldPrepareThreadHandoff({
-        ...freshCheckpointPolicy,
-        hasExplicitCheckpoint: checkpoint.state !== "none",
-      }),
-    ).toBe(true);
-  });
-
   it("detects only the actual latest settled assistant checkpoint", () => {
     const checkpoint = {
       role: "assistant" as const,
@@ -90,53 +38,28 @@ describe("context handoff policy", () => {
     expect(latestContextCheckpoint([])).toEqual({ state: "none" });
   });
 
-  it("offers one handoff for an expensive thread after an overnight pause", () => {
-    expect(
-      shouldPrepareThreadHandoff({
-        snapshotCurrent: true,
-        nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
-        latestMessageAt: "2026-09-12T07:59:59.999Z",
-        usedTokens: 100_000,
-        sessionStatus: "idle",
-        latestTurnState: "completed",
-        hasPendingRequest: false,
-        handoffState: "none",
-      }),
-    ).toBe(true);
-  });
+  const overnight = {
+    snapshotCurrent: true,
+    nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
+    latestMessageAt: "2026-09-12T07:59:59.999Z",
+    usedTokens: 100_000,
+    working: false,
+    hasPendingRequest: false,
+  };
 
-  it("waits for the thread snapshot to synchronize before requesting a handoff", () => {
-    expect(
-      shouldPrepareThreadHandoff({
-        nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
-        latestMessageAt: "2026-09-12T07:59:59.999Z",
-        usedTokens: 100_000,
-        sessionStatus: "idle",
-        latestTurnState: "completed",
-        hasPendingRequest: false,
-        handoffState: "none",
-        snapshotCurrent: false,
-      }),
-    ).toBe(false);
+  it("offers Start fresh on an expensive thread after an overnight pause", () => {
+    expect(shouldOfferStartFresh(overnight)).toBe(true);
   });
 
   it.each([
-    { usedTokens: 99_999, latestMessageAt: "2026-09-12T07:00:00.000Z", handoffState: "none" },
-    { usedTokens: 100_000, latestMessageAt: "2026-09-12T08:00:00.001Z", handoffState: "none" },
-    { usedTokens: 100_000, latestMessageAt: "2026-09-12T07:00:00.000Z", handoffState: "ready" },
-  ] as const)("does not repeat or prepare below a threshold (%o)", (sample) => {
-    expect(
-      shouldPrepareThreadHandoff({
-        snapshotCurrent: true,
-        nowMs: Date.parse("2026-09-12T16:00:00.000Z"),
-        latestMessageAt: sample.latestMessageAt,
-        usedTokens: sample.usedTokens,
-        sessionStatus: "idle",
-        latestTurnState: "completed",
-        hasPendingRequest: false,
-        handoffState: sample.handoffState,
-      }),
-    ).toBe(false);
+    { snapshotCurrent: false },
+    { working: true },
+    { hasPendingRequest: true },
+    { usedTokens: 99_999 },
+    { usedTokens: null },
+    { latestMessageAt: "2026-09-12T08:00:00.001Z" },
+  ])("does not offer Start fresh below a threshold or while busy (%o)", (gate) => {
+    expect(shouldOfferStartFresh({ ...overnight, ...gate })).toBe(false);
   });
 
   it("uses the latest non-streaming user message as the source revision", () => {

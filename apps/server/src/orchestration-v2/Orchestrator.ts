@@ -86,12 +86,6 @@ import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
-  renderHandoffWorkspaceObservation,
-  renderHandoffTestEvidence,
-  renderHandoffRuntimeObservation,
-} from "@t3tools/shared/contextHandoff";
-import { isReviewInstance } from "../provider/reviewPolicy.ts";
-import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
@@ -236,6 +230,16 @@ export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<Orc
   }
 }
 
+/** Clients older than the retirement still send thread.handoff.prepare and thread.handoff.start. */
+export class OrchestratorContextHandoffRetiredError extends Schema.TaggedError<OrchestratorContextHandoffRetiredError>()(
+  "OrchestratorContextHandoffRetiredError",
+  { commandId: CommandId, commandType: Schema.String },
+) {
+  override get message(): string {
+    return "Start fresh's transcript handoff is retired; start a new thread.";
+  }
+}
+
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
   { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -372,6 +376,7 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorThreadAlreadyExistsError,
+  OrchestratorContextHandoffRetiredError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
@@ -14921,19 +14926,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
 
+  // Preparation and start are retired; complete settles requests persisted before the upgrade, and
+  // dismiss lets an older client clear its banner.
   const dispatchCompactHandoff = Effect.fn("orchestrationV2.dispatch.compactHandoff")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
-      {
-        readonly type:
-          | "thread.handoff.prepare"
-          | "thread.handoff.complete"
-          | "thread.handoff.dismiss"
-          | "thread.handoff.start";
-      }
+      { readonly type: "thread.handoff.complete" | "thread.handoff.dismiss" }
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     const thread = projection.thread;
@@ -14952,10 +14952,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
       ) && !projection.runtimeRequests.some((request) => request.status === "pending");
     const now = yield* DateTime.now;
-    const update = (
-      compactHandoff: NonNullable<OrchestrationV2AppThread["compactHandoff"]>,
-      archivedAt = thread.archivedAt,
-    ) =>
+    const update = (compactHandoff: NonNullable<OrchestrationV2AppThread["compactHandoff"]>) =>
       emit(
         events,
         command,
@@ -14964,7 +14961,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: thread.id,
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
-        payload: { ...thread, compactHandoff, archivedAt, updatedAt: now },
+        payload: { ...thread, compactHandoff, updatedAt: now },
       });
     if (command.type === "thread.handoff.complete") {
       // Late results never replace a newer decision or conversation revision.
@@ -14988,127 +14985,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* update(command.payload);
     }
     if (
-      command.type !== "thread.handoff.dismiss" &&
-      (thread.archivedAt !== null ||
-        thread.deletedAt !== null ||
-        !idle ||
-        isReviewInstance(thread.providerInstanceId))
+      latestUser?.id !== command.sourceMessageId ||
+      current?.sourceMessageId !== command.sourceMessageId ||
+      (current.state !== "requested" && current.state !== "ready" && current.state !== "failed")
     )
-      return yield* reject(
-        "A handoff requires an idle, unblocked, active conversation outside Review.",
-      );
-    if (command.type === "thread.handoff.prepare") {
-      if (latestUser?.id !== command.sourceMessageId)
-        return yield* reject("The conversation changed before its handoff could be prepared.");
-      if (
-        current?.sourceMessageId === command.sourceMessageId &&
-        !(command.retry === true && (current.state === "failed" || current.state === "ready"))
-      )
-        return yield* reject("This conversation revision already has a handoff decision.");
-      yield* update({
-        state: "requested",
-        requestId: command.commandId,
-        sourceMessageId: command.sourceMessageId,
-      });
-      yield* Ref.update(effects, (pending) => [
-        ...pending,
-        {
-          id: `compact-handoff:${command.commandId}`,
-          commandId: command.commandId,
-          threadId: thread.id,
-          request: {
-            type: "thread.handoff.prepare" as const,
-            requestId: command.commandId,
-            sourceMessageId: command.sourceMessageId,
-          },
-        },
-      ]);
-      return;
-    }
-    if (command.type === "thread.handoff.dismiss") {
-      if (
-        latestUser?.id !== command.sourceMessageId ||
-        current?.sourceMessageId !== command.sourceMessageId ||
-        (current.state !== "requested" && current.state !== "ready" && current.state !== "failed")
-      )
-        return yield* reject("There is no current handoff to dismiss.");
-      return yield* update({
-        state: "dismissed",
-        requestId: current.requestId,
-        sourceMessageId: command.sourceMessageId,
-      });
-    }
-    if (
-      current?.state !== "ready" ||
-      current.requestId !== command.requestId ||
-      latestUser?.id !== current.sourceMessageId
-    )
-      return yield* reject("The ready handoff is stale or no longer available.");
-    if (
-      command.targetThreadId === thread.id ||
-      (yield* projectionStore
-        .getThreadShell(command.targetThreadId)
-        .pipe(mapDispatchError(command))) !== null
-    )
-      return yield* reject("The continuation requires a new conversation identity.");
-    const prompt =
-      "Continue from this compact operational handoff. Verify workspace and code claims before acting.\n\n" +
-      current.handoff +
-      (current.workspaceObservation
-        ? "\n\n" + renderHandoffWorkspaceObservation(current.workspaceObservation)
-        : "") +
-      (current.testEvidence ? "\n\n" + renderHandoffTestEvidence(current.testEvidence) : "") +
-      (current.runtimeObservation
-        ? "\n\n" + renderHandoffRuntimeObservation(current.runtimeObservation)
-        : "");
-    yield* dispatchThreadMutation(
-      { type: "thread.archive", commandId: command.commandId, threadId: thread.id },
-      events,
-      effects,
-    );
-    yield* update(
-      {
-        state: "started",
-        requestId: current.requestId,
-        sourceMessageId: current.sourceMessageId,
-        targetThreadId: command.targetThreadId,
-      },
-      now,
-    );
-    // All source/target events, command receipt and provider effects commit in
-    // the existing event-sink transaction. There is no setup-script launch path.
-    yield* dispatchThreadCreate(
-      {
-        type: "thread.create",
-        commandId: command.commandId,
-        threadId: command.targetThreadId,
-        projectId: thread.projectId,
-        title: `${thread.title} · continued`,
-        modelSelection: thread.modelSelection,
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        createdBy: command.createdBy,
-        creationSource: command.creationSource,
-      },
-      events,
-    );
-    yield* dispatchMessage(
-      {
-        type: "message.dispatch",
-        commandId: command.commandId,
-        threadId: command.targetThreadId,
-        messageId: MessageId.make(`context-handoff:${command.commandId}`),
-        text: prompt,
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: command.createdBy,
-        creationSource: command.creationSource,
-      },
-      events,
-      effects,
-    );
+      return yield* reject("There is no current handoff to dismiss.");
+    return yield* update({
+      state: "dismissed",
+      requestId: current.requestId,
+      sourceMessageId: command.sourceMessageId,
+    });
   });
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
@@ -15143,10 +15029,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
       case "thread.handoff.prepare":
+      case "thread.handoff.start":
+        return yield* new OrchestratorContextHandoffRetiredError({
+          commandId: command.commandId,
+          commandType: command.type,
+        });
       case "thread.handoff.complete":
       case "thread.handoff.dismiss":
-      case "thread.handoff.start":
-        yield* dispatchCompactHandoff(command, events, effects);
+        yield* dispatchCompactHandoff(command, events);
         break;
       case "thread.create": {
         yield* dispatchThreadCreate(command, events);

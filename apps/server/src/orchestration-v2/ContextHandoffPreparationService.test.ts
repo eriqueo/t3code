@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -7,17 +6,13 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
-import { formatContextCheckpoint } from "@t3tools/shared/contextHandoff";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import * as ProjectStore from "./ProjectStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -61,26 +56,11 @@ const preparationLayer = Preparation.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       threadsLayer,
-      database,
-      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
       Layer.mock(ProcessRunner.ProcessRunner)({
-        run: (input) =>
-          input.command === "t3-dx2-handoff"
-            ? Effect.die("An explicit checkpoint must never launch DX2")
-            : Effect.succeed({
-                stdout: "",
-                stderr: "",
-                code: ChildProcessSpawner.ExitCode(1),
-                timedOut: false,
-                stdoutTruncated: false,
-                stderrTruncated: false,
-                stdoutInvalidUtf8: false,
-                stderrInvalidUtf8: false,
-              }),
+        run: (input) => Effect.die(`Retired preparation launched ${input.command}`),
       }),
     ),
   ),
-  Layer.provide(NodeServices.layer),
 );
 const testLayer = Layer.mergeAll(
   orchestrator,
@@ -94,7 +74,6 @@ const seed = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
-  const later = DateTime.add(now, { seconds: 1 });
   yield* threads.dispatch({
     type: "thread.create",
     commandId: CommandId.make("compact-create"),
@@ -131,226 +110,93 @@ const seed = Effect.gen(function* () {
           creationSource: "web",
         },
       },
-      {
-        id: EventId.make("compact-checkpoint-event"),
-        type: "message.updated",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: MessageId.make("compact-checkpoint"),
-          threadId,
-          runId: null,
-          nodeId: null,
-          role: "assistant",
-          text: formatContextCheckpoint("Keep the exact handoff. No deployment yet."),
-          attachments: [],
-          streaming: false,
-          createdAt: later,
-          updatedAt: later,
-          createdBy: "agent",
-          creationSource: "provider",
-        },
-      },
     ],
   });
   return threads;
 });
-const request = {
-  type: "thread.handoff.prepare" as const,
-  commandId: requestId,
-  threadId,
-  sourceMessageId,
-};
-const execute = (attemptCount = 1) =>
-  Preparation.ContextHandoffPreparationService.use((service) =>
-    service.execute({ threadId, requestId, sourceMessageId, attemptCount }),
-  );
 
-it.effect("retains the exact checkpoint and atomically starts one fresh thread on replay", () =>
+it.effect("refuses preparation and start from a client that predates the retirement", () =>
   Effect.gen(function* () {
     const threads = yield* seed;
-    yield* threads.dispatch(request);
-    const outbox = yield* EffectOutbox.EffectOutboxV2;
-    const queued = yield* outbox.listByCommandId(requestId);
-    assert.equal(
-      queued.filter((effect) => effect.request.type === "thread.handoff.prepare").length,
-      1,
-    );
-    yield* threads.dispatch(request);
-    yield* execute();
-    const ready = (yield* threads.getThreadProjection(threadId)).thread.compactHandoff;
-    assert.equal(ready?.state, "ready");
-    if (ready?.state !== "ready") return yield* Effect.die("Expected ready checkpoint");
-    assert.equal(ready.handoff, "Keep the exact handoff. No deployment yet.");
-    assert.equal(ready.inputCharacters, 0);
-    assert.isDefined(ready.workspaceObservation);
-    assert.isDefined(ready.testEvidence);
-    assert.isDefined(ready.runtimeObservation);
     const targetThreadId = ThreadId.make("compact-successor");
+    for (const command of [
+      {
+        type: "thread.handoff.prepare" as const,
+        commandId: requestId,
+        threadId,
+        sourceMessageId,
+      },
+      {
+        type: "thread.handoff.start" as const,
+        commandId: CommandId.make("compact-start"),
+        threadId,
+        requestId,
+        targetThreadId,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      },
+    ]) {
+      const result = yield* Effect.flip(threads.dispatch(command));
+      assert.equal(result._tag, "OrchestratorContextHandoffRetiredError");
+      assert.equal(
+        result.message,
+        "Start fresh's transcript handoff is retired; start a new thread.",
+      );
+    }
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    assert.lengthOf(yield* outbox.listByCommandId(requestId), 0);
+    const source = yield* threads.getThreadProjection(threadId);
+    assert.isUndefined(source.thread.compactHandoff);
+    assert.isNull(source.thread.archivedAt);
+    assert.equal(
+      (yield* Effect.result(threads.getThreadProjection(targetThreadId)))._tag,
+      "Failure",
+    );
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("settles a preparation persisted before the upgrade without selecting passages", () =>
+  Effect.gen(function* () {
+    const threads = yield* seed;
     const sink = yield* EventSink.EventSinkV2;
     const now = yield* DateTime.now;
-    const idleSessionId = ProviderSessionId.make("compact-idle-source-session");
+    const { thread } = yield* threads.getThreadProjection(threadId);
     yield* sink.write({
       events: [
         {
-          id: EventId.make("compact-idle-session-event"),
-          type: "provider-session.attached",
+          id: EventId.make("compact-requested-event"),
+          type: "thread.metadata-updated",
           threadId,
+          providerInstanceId: thread.providerInstanceId,
           occurredAt: now,
           payload: {
-            id: idleSessionId,
-            driver: ProviderDriverKind.make("codex"),
-            providerInstanceId: modelSelection.instanceId,
-            status: "ready",
-            cwd: "/fixture/missing-checkout",
-            model: modelSelection.model,
-            capabilities: CodexProviderCapabilitiesV2,
-            createdAt: now,
+            ...thread,
+            compactHandoff: { state: "requested", requestId, sourceMessageId },
             updatedAt: now,
-            lastError: null,
           },
         },
       ],
     });
-    const start = {
-      type: "thread.handoff.start" as const,
-      commandId: CommandId.make("compact-start"),
-      threadId,
-      requestId,
-      targetThreadId,
-      createdBy: "user" as const,
-      creationSource: "web" as const,
-    };
-    const first = yield* threads.dispatch(start);
-    const replayed = yield* threads.dispatch(start);
-    assert.equal(replayed.sequence, first.sequence);
-    const source = yield* threads.getThreadProjection(threadId);
-    const target = yield* threads.getThreadProjection(targetThreadId);
-    assert.isNotNull(source.thread.archivedAt);
-    assert.equal(source.thread.compactHandoff?.state, "started");
-    assert.isTrue(
-      (yield* outbox.listByCommandId(start.commandId)).some(
-        (effect) =>
-          effect.request.type === "provider-session.detach" &&
-          effect.request.providerSessionId === idleSessionId,
-      ),
+    const execute = Preparation.ContextHandoffPreparationService.use((service) =>
+      service.execute({ threadId, requestId, sourceMessageId, attemptCount: 1 }),
     );
-    assert.equal(target.thread.worktreePath, source.thread.worktreePath);
-    assert.deepEqual(target.thread.modelSelection, source.thread.modelSelection);
-    assert.lengthOf(target.messages, 1);
-    assert.include(target.messages[0]!.text, ready.handoff);
-    assert.include(target.messages[0]!.text, "T3 historical test receipts");
-    assert.lengthOf(target.runs, 1);
-  }).pipe(Effect.provide(testLayer)),
-);
+    yield* execute;
+    // A reclaimed outbox attempt replays the same effect; it must settle, not loop.
+    yield* execute;
+    const settled = (yield* threads.getThreadProjection(threadId)).thread.compactHandoff;
+    assert.equal(settled?.state, "failed");
+    if (settled?.state === "failed") assert.equal(settled.code, "retired");
 
-it.effect("makes a reclaimed worker terminal without a second selection", () =>
-  Effect.gen(function* () {
-    const threads = yield* seed;
-    yield* threads.dispatch(request);
-    yield* execute(2);
-    const state = (yield* threads.getThreadProjection(threadId)).thread.compactHandoff;
-    assert.equal(state?.state, "failed");
-    if (state?.state === "failed") assert.equal(state.code, "worker_interrupted");
-  }).pipe(Effect.provide(testLayer)),
-);
-
-it.effect("does not publish a dismissed result or start a stale continuation", () =>
-  Effect.gen(function* () {
-    const threads = yield* seed;
-    yield* threads.dispatch(request);
+    // An older client can still clear the banner it shows for that failure.
     yield* threads.dispatch({
       type: "thread.handoff.dismiss",
       commandId: CommandId.make("compact-dismiss"),
       threadId,
       sourceMessageId,
     });
-    yield* execute();
     assert.equal(
       (yield* threads.getThreadProjection(threadId)).thread.compactHandoff?.state,
       "dismissed",
     );
-    const result = yield* Effect.result(
-      threads.dispatch({
-        type: "thread.handoff.start",
-        commandId: CommandId.make("compact-stale-start"),
-        threadId,
-        requestId,
-        targetThreadId: ThreadId.make("compact-stale-target"),
-        createdBy: "user",
-        creationSource: "web",
-      }),
-    );
-    assert.equal(result._tag, "Failure");
-  }).pipe(Effect.provide(testLayer)),
-);
-
-it.effect("rejects a ready handoff after a newer user message without archiving its source", () =>
-  Effect.gen(function* () {
-    const threads = yield* seed;
-    yield* threads.dispatch(request);
-    yield* execute();
-    const sink = yield* EventSink.EventSinkV2;
-    const now = DateTime.add(yield* DateTime.now, { seconds: 2 });
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make("compact-new-user-event"),
-          type: "message.updated",
-          threadId,
-          occurredAt: now,
-          payload: {
-            id: MessageId.make("compact-new-user"),
-            threadId,
-            runId: null,
-            nodeId: null,
-            role: "user",
-            text: "A newer decision",
-            attachments: [],
-            streaming: false,
-            createdAt: now,
-            updatedAt: now,
-            createdBy: "user",
-            creationSource: "web",
-          },
-        },
-      ],
-    });
-    const result = yield* Effect.result(
-      threads.dispatch({
-        type: "thread.handoff.start",
-        commandId: CommandId.make("compact-outdated-start"),
-        threadId,
-        requestId,
-        targetThreadId: ThreadId.make("compact-outdated-target"),
-        createdBy: "user",
-        creationSource: "web",
-      }),
-    );
-    assert.equal(result._tag, "Failure");
-    assert.isNull((yield* threads.getThreadProjection(threadId)).thread.archivedAt);
-  }).pipe(Effect.provide(testLayer)),
-);
-
-it.effect("rejects preparation while a user message is queued", () =>
-  Effect.gen(function* () {
-    const threads = yield* seed;
-    const messageId = MessageId.make("compact-queued-user");
-    yield* threads.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("compact-queue"),
-      threadId,
-      messageId,
-      text: "Wait for this",
-      attachments: [],
-      dispatchMode: { type: "defer_start" },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    const result = yield* Effect.result(
-      threads.dispatch({ ...request, sourceMessageId: messageId }),
-    );
-    assert.equal(result._tag, "Failure");
-    assert.isUndefined((yield* threads.getThreadProjection(threadId)).thread.compactHandoff);
   }).pipe(Effect.provide(testLayer)),
 );

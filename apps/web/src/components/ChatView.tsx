@@ -2632,7 +2632,6 @@ export default function ChatView(props: ChatViewProps) {
   const compactHandoffBanner = useCompactHandoff({
     environmentId,
     projection: serverProjection,
-    supported: serverConfig?.environment.capabilities.threadContextHandoffs === true,
     snapshotCurrent: threadSyncPhase === null,
     nowMinute,
     usedTokens: activeContextWindow?.usedTokens ?? null,

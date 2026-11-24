@@ -1,18 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
-import { CommandId, REVIEW_PROVIDER_INSTANCE_ID, type EnvironmentId } from "@t3tools/contracts";
-import {
-  latestContextCheckpoint,
-  shouldPrepareThreadHandoff,
-} from "@t3tools/shared/contextHandoff";
-import type { ThreadHandoffCommand } from "@t3tools/client-runtime/state/threads";
+import { REVIEW_PROVIDER_INSTANCE_ID, type EnvironmentId } from "@t3tools/contracts";
+import { shouldOfferStartFresh } from "@t3tools/shared/contextHandoff";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { routeStartFresh, trackerFailureText } from "@t3tools/client-runtime/tracker-start";
 import * as DateTime from "effect/DateTime";
 import { Minimize2Icon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { newThreadId, randomUUID } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { serverEnvironment } from "../../state/server";
@@ -23,21 +19,20 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
+/** Offers Start fresh on an expensive conversation that has sat idle. */
 export function useCompactHandoff(input: {
   readonly environmentId: EnvironmentId;
   readonly projection: Pick<
     ThreadStructure,
     "thread" | "messages" | "runs" | "runtimeRequests"
   > | null;
-  readonly supported: boolean;
   readonly snapshotCurrent: boolean;
   readonly nowMinute: string;
   readonly usedTokens: number | null;
 }): ComposerBannerStackItem | null {
   const { environmentId, projection } = input;
   const navigate = useNavigate();
-  const canOperate = useAtomValue(threadEnvironment.handoff.permissionAtom(environmentId));
-  const dispatch = useAtomCommand(threadEnvironment.handoff, { reportFailure: false });
+  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const ownerOf = useAtomCommand(serverEnvironment.trackerThreadOwner, { reportFailure: false });
   const startAgent = useTrackerAgentStart();
   const trackerHub =
@@ -45,93 +40,50 @@ export function useCompactHandoff(input: {
       .trackerHub === true;
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const requested = useRef(new Set<string>());
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const source = projection?.messages.findLast(
     (message) => message.role === "user" && !message.streaming,
   );
-  const current = projection?.thread.compactHandoff;
-  const state = current?.sourceMessageId === source?.id ? current : null;
-  const available =
-    input.supported &&
-    canOperate &&
-    projection !== null &&
-    projection.thread.providerInstanceId !== REVIEW_PROVIDER_INSTANCE_ID &&
-    projection.thread.archivedAt === null &&
-    projection.thread.deletedAt === null;
-  const working =
-    projection?.runs.some((run) =>
-      ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
-    ) === true;
-  const blocked =
-    projection?.runtimeRequests.some((request) => request.status === "pending") === true;
+  if (projection === null || source === undefined) return null;
+  const { thread } = projection;
+  const key = JSON.stringify([environmentId, thread.id, source.id]);
+  // Decisions recorded before the transcript handoff retired still close the offer.
+  const decided =
+    thread.compactHandoff?.sourceMessageId === source.id &&
+    (thread.compactHandoff.state === "dismissed" || thread.compactHandoff.state === "started");
+  const working = projection.runs.some((run) =>
+    ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  const blocked = projection.runtimeRequests.some((request) => request.status === "pending");
+  if (
+    thread.providerInstanceId === REVIEW_PROVIDER_INSTANCE_ID ||
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    decided ||
+    dismissed === key ||
+    !shouldOfferStartFresh({
+      snapshotCurrent: input.snapshotCurrent,
+      nowMs: Date.parse(`${input.nowMinute}:00.000Z`),
+      latestMessageAt: DateTime.formatIso(source.updatedAt),
+      usedTokens: input.usedTokens,
+      working,
+      hasPendingRequest: blocked,
+    })
+  )
+    return null;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronizes the server's durable handoff preparation with idle thread eligibility while mounted.
-  useEffect(() => {
-    if (!available || projection === null || source === undefined) return;
-    const key = JSON.stringify([environmentId, projection.thread.id, source.id]);
-    if (
-      requested.current.has(key) ||
-      !shouldPrepareThreadHandoff({
-        snapshotCurrent: input.snapshotCurrent,
-        hasExplicitCheckpoint: latestContextCheckpoint(projection.messages).state !== "none",
-        nowMs: Date.parse(`${input.nowMinute}:00.000Z`),
-        latestMessageAt: DateTime.formatIso(source.updatedAt),
-        usedTokens: input.usedTokens,
-        sessionStatus: working ? "running" : "idle",
-        latestTurnState: working ? "running" : "completed",
-        hasPendingRequest: blocked,
-        handoffState: state?.state ?? "none",
-      })
-    )
-      return;
-    // AUTO-MANAGED: retain at most 128 revision keys; evict the oldest at the
-    // limit. The server's durable decision remains the deduplication authority.
-    if (requested.current.size >= 128)
-      requested.current.delete(requested.current.values().next().value!);
-    requested.current.add(key);
-    void dispatch({
-      environmentId,
-      input: {
-        type: "thread.handoff.prepare",
-        commandId: CommandId.make(randomUUID()),
-        threadId: projection.thread.id,
-        sourceMessageId: source.id,
-      },
-    }).then((result) => {
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        requested.current.delete(key);
-        toastManager.add({ type: "error", title: "Could not request a handoff" });
-      }
-    });
-  }, [
-    available,
-    blocked,
-    dispatch,
-    environmentId,
-    input.nowMinute,
-    input.snapshotCurrent,
-    input.usedTokens,
-    projection,
-    source,
-    state?.state,
-    working,
-  ]);
-
-  const act = async (command: ThreadHandoffCommand) => {
-    if (busyRef.current || !canOperate) return;
+  const startFresh = async () => {
+    if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     try {
-      const route =
-        command.type === "thread.handoff.start" && projection !== null
-          ? await routeStartFresh({
-              trackerHub,
-              threadId: projection.thread.id,
-              modelSelection: projection.thread.modelSelection,
-              key: randomUUID(),
-              ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
-            })
-          : ({ _tag: "Handoff" } as const);
+      const route = await routeStartFresh({
+        trackerHub,
+        thread,
+        newThreadId: newThreadId(),
+        key: randomUUID(),
+        ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
+      });
       if (route._tag === "OwnerUnknown") {
         if (!isAtomCommandInterrupted(route.failure)) {
           toastManager.add({
@@ -143,98 +95,38 @@ export function useCompactHandoff(input: {
       } else if (route._tag === "StartAgent") {
         await startAgent(environmentId, route.input);
       } else {
-        await handoff(command);
+        const created = await createThread({
+          environmentId,
+          input: { ...route.input, creationSource: "web" },
+        });
+        if (created._tag === "Success") {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(scopeThreadRef(environmentId, route.input.threadId)),
+          });
+        } else if (!isAtomCommandInterrupted(created)) {
+          toastManager.add({ type: "error", title: "Could not start a new thread" });
+        }
       }
     } catch {
-      toastManager.add({ type: "error", title: "Could not open the handoff" });
+      toastManager.add({ type: "error", title: "Could not start a new thread" });
     }
     busyRef.current = false;
     setBusy(false);
   };
-  const handoff = async (command: ThreadHandoffCommand) => {
-    const result = await dispatch({ environmentId, input: command });
-    if (result._tag === "Success" && command.type === "thread.handoff.start") {
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(environmentId, command.targetThreadId)),
-      });
-    } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      toastManager.add({ type: "error", title: "Could not update the handoff" });
-    }
-  };
-  if (
-    !available ||
-    !state ||
-    !source ||
-    !projection ||
-    state.state === "dismissed" ||
-    state.state === "started"
-  )
-    return null;
-  const threadId = projection.thread.id;
-  const dismiss = () =>
-    void act({
-      type: "thread.handoff.dismiss",
-      commandId: CommandId.make(randomUUID()),
-      threadId,
-      sourceMessageId: source.id,
-    });
-  const retry = () =>
-    void act({
-      type: "thread.handoff.prepare",
-      commandId: CommandId.make(randomUUID()),
-      threadId,
-      sourceMessageId: source.id,
-      retry: true,
-    });
-  const disabled = busy || working || blocked || !input.snapshotCurrent;
   return {
-    id: `context-handoff:${state.requestId}`,
-    variant: state.state === "failed" ? "error" : "info",
+    id: `start-fresh:${source.id}`,
+    variant: "info",
     icon: <Minimize2Icon />,
-    title:
-      state.state === "requested"
-        ? "Preparing context handoff"
-        : state.state === "failed"
-          ? "Could not prepare the handoff"
-          : "Fresh-conversation handoff ready",
+    title: "Start a fresh conversation?",
     description:
-      state.state === "requested"
-        ? "You can keep working here while it runs"
-        : state.state === "failed"
-          ? state.detail
-          : "Start with compact operational memory instead of replaying this full thread",
+      "This conversation is long and has been idle. A new one starts without its history",
     dismissLabel: "Keep full history",
-    onDismiss: dismiss,
-    ...(state.state === "requested"
-      ? {}
-      : {
-          actions: (
-            <>
-              <Button size="sm" variant="ghost" disabled={disabled} onClick={retry}>
-                {state.state === "failed" ? "Retry" : "Regenerate"}
-              </Button>
-              {state.state === "ready" && (
-                <Button
-                  size="sm"
-                  disabled={disabled}
-                  onClick={() =>
-                    void act({
-                      type: "thread.handoff.start",
-                      commandId: CommandId.make(randomUUID()),
-                      threadId,
-                      requestId: state.requestId,
-                      targetThreadId: newThreadId(),
-                      createdBy: "user",
-                      creationSource: "web",
-                    })
-                  }
-                >
-                  Start fresh
-                </Button>
-              )}
-            </>
-          ),
-        }),
+    onDismiss: () => setDismissed(key),
+    actions: (
+      <Button size="sm" disabled={busy} onClick={() => void startFresh()}>
+        Start fresh
+      </Button>
+    ),
   };
 }

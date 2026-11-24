@@ -41,4 +41,6 @@ pick by default), then asks the hub to start the agent in the work's own workspa
 conversation becomes the one that receives your decisions, and opens once it exists.
 
 **Start fresh** on a conversation that owns a work item does the same with that conversation's
-model, instead of the context handoff. If the hub cannot be reached, nothing starts.
+model. If the hub cannot be reached, nothing starts. On a conversation that owns none, it opens an
+empty conversation with the same model and workspace; nothing from the old one carries over, so
+keep anything worth remembering on a work item.

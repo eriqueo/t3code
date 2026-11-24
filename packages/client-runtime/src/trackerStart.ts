@@ -1,15 +1,16 @@
 import type {
-  ModelSelection,
+  OrchestrationV2AppThread,
   ThreadId,
   TrackerStartAgentInput,
   TrackerThreadOwner,
   TrackerThreadOwnerInput,
 } from "@t3tools/contracts";
 
+import type { CreateThreadInput } from "./operations/commands.ts";
 import { squashAtomCommandFailure, type AtomCommandResult } from "./state/runtime.ts";
 
 export type StartFreshRoute =
-  | { readonly _tag: "Handoff" }
+  | { readonly _tag: "NewThread"; readonly input: CreateThreadInput }
   | { readonly _tag: "StartAgent"; readonly input: TrackerStartAgentInput }
   | {
       readonly _tag: "OwnerUnknown";
@@ -21,27 +22,51 @@ export type StartFreshRoute =
 
 /**
  * Start fresh on a conversation that owns a tracker record asks the hub for the new agent, so
- * Eric's decisions follow it. One that owns none keeps the context handoff. When the hub cannot
- * say, nothing starts: a guess either way would strand his decisions.
+ * Eric's decisions follow it. One that owns none opens an empty conversation on the same model
+ * and workspace; nothing from the old one is carried. When the hub cannot say, nothing starts:
+ * a guess either way would strand his decisions.
  */
 export async function routeStartFresh(input: {
   /** The environment's server reaches a tracker hub. */
   readonly trackerHub: boolean;
-  readonly threadId: ThreadId;
-  readonly modelSelection: ModelSelection;
+  readonly thread: Pick<
+    OrchestrationV2AppThread,
+    | "id"
+    | "projectId"
+    | "modelSelection"
+    | "runtimeMode"
+    | "interactionMode"
+    | "branch"
+    | "worktreePath"
+  >;
+  readonly newThreadId: ThreadId;
   /** Fresh per press; the hub starts one agent per key. */
   readonly key: string;
   readonly ownerOf: (
     input: TrackerThreadOwnerInput,
   ) => Promise<AtomCommandResult<TrackerThreadOwner, unknown>>;
 }): Promise<StartFreshRoute> {
-  if (!input.trackerHub) return { _tag: "Handoff" };
-  const owner = await input.ownerOf({ threadId: input.threadId });
+  const { thread } = input;
+  const newThread = {
+    _tag: "NewThread",
+    input: {
+      threadId: input.newThreadId,
+      projectId: thread.projectId,
+      title: "New thread",
+      modelSelection: thread.modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+    },
+  } as const;
+  if (!input.trackerHub) return newThread;
+  const owner = await input.ownerOf({ threadId: thread.id });
   if (owner._tag === "Failure") return { _tag: "OwnerUnknown", failure: owner };
-  if (owner.value.workId === null) return { _tag: "Handoff" };
+  if (owner.value.workId === null) return newThread;
   return {
     _tag: "StartAgent",
-    input: { workId: owner.value.workId, key: input.key, model: input.modelSelection },
+    input: { workId: owner.value.workId, key: input.key, model: thread.modelSelection },
   };
 }
 

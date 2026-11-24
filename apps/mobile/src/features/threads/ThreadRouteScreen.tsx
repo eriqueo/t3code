@@ -1002,7 +1002,6 @@ function ThreadRouteContent(
               environmentId={selectedThread.environmentId}
               projection={selectedThreadDetail}
               snapshotCurrent={selectedThreadDetailState.status === "live"}
-              supported={serverConfig?.environment.capabilities.threadContextHandoffs === true}
             />
           }
           header={
