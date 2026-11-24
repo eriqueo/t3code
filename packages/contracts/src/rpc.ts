@@ -363,11 +363,14 @@ import {
   TrackerGetPortfolioInput,
   TrackerGetWorkInput,
   TrackerHubError,
-  TrackerLaunchPrompt,
+  TrackerAgentStart,
   TrackerLinkedThread,
   TrackerLinkThreadInput,
   TrackerPortfolio,
   TrackerUpdateWatchInput,
+  TrackerStartAgentInput,
+  TrackerThreadOwner,
+  TrackerThreadOwnerInput,
   TrackerWorkDetail,
 } from "./tracker.ts";
 import {
@@ -567,7 +570,8 @@ export const WS_METHODS = {
 
   trackerGetPortfolio: "tracker.getPortfolio",
   trackerGetWork: "tracker.getWork",
-  trackerGetLaunchPrompt: "tracker.getLaunchPrompt",
+  trackerGetThreadOwner: "tracker.getThreadOwner",
+  trackerStartAgent: "tracker.startAgent",
   trackerLinkThread: "tracker.linkThread",
   trackerAnswerCard: "tracker.answerCard",
   trackerDoneDeciding: "tracker.doneDeciding",
@@ -1057,9 +1061,15 @@ const WsTrackerGetWorkRpc = Rpc.make(WS_METHODS.trackerGetWork, {
   error: trackerRpcError,
 });
 
-const WsTrackerGetLaunchPromptRpc = Rpc.make(WS_METHODS.trackerGetLaunchPrompt, {
-  payload: TrackerGetWorkInput,
-  success: TrackerLaunchPrompt,
+const WsTrackerGetThreadOwnerRpc = Rpc.make(WS_METHODS.trackerGetThreadOwner, {
+  payload: TrackerThreadOwnerInput,
+  success: TrackerThreadOwner,
+  error: trackerRpcError,
+});
+
+const WsTrackerStartAgentRpc = Rpc.make(WS_METHODS.trackerStartAgent, {
+  payload: TrackerStartAgentInput,
+  success: TrackerAgentStart,
   error: trackerRpcError,
 });
 
@@ -2237,7 +2247,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsTrackerGetPortfolioRpc,
   WsTrackerGetWorkRpc,
-  WsTrackerGetLaunchPromptRpc,
+  WsTrackerGetThreadOwnerRpc,
+  WsTrackerStartAgentRpc,
   WsTrackerLinkThreadRpc,
   WsTrackerAnswerCardRpc,
   WsTrackerDoneDecidingRpc,

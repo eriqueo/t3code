@@ -36,5 +36,9 @@ or whose work is finished, keeps the name it had.
 
 ## Start an agent
 
-**Launch Agent** on a work item opens a new draft in the project you choose, with the hub's
-next prompt in the composer. Nothing starts until you send it.
+**Launch Agent** on a work item takes an optional note and a model (your most recent composer
+pick by default), then asks the hub to start the agent in the work's own workspace. The new
+conversation becomes the one that receives your decisions, and opens once it exists.
+
+**Start fresh** on a conversation that owns a work item does the same with that conversation's
+model, instead of the context handoff. If the hub cannot be reached, nothing starts.

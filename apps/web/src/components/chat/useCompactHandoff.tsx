@@ -9,13 +9,16 @@ import type { ThreadHandoffCommand } from "@t3tools/client-runtime/state/threads
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { routeStartFresh, trackerFailureText } from "@t3tools/client-runtime/tracker-start";
 import * as DateTime from "effect/DateTime";
 import { Minimize2Icon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { newThreadId, randomUUID } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useTrackerAgentStart } from "../tracker/useTrackerAgentStart";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -35,6 +38,11 @@ export function useCompactHandoff(input: {
   const navigate = useNavigate();
   const canOperate = useAtomValue(threadEnvironment.handoff.permissionAtom(environmentId));
   const dispatch = useAtomCommand(threadEnvironment.handoff, { reportFailure: false });
+  const ownerOf = useAtomCommand(serverEnvironment.trackerThreadOwner, { reportFailure: false });
+  const startAgent = useTrackerAgentStart();
+  const trackerHub =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+      .trackerHub === true;
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const requested = useRef(new Set<string>());
@@ -114,20 +122,45 @@ export function useCompactHandoff(input: {
     busyRef.current = true;
     setBusy(true);
     try {
-      const result = await dispatch({ environmentId, input: command });
-      if (result._tag === "Success" && command.type === "thread.handoff.start") {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(environmentId, command.targetThreadId)),
-        });
-      } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        toastManager.add({ type: "error", title: "Could not update the handoff" });
+      const route =
+        command.type === "thread.handoff.start" && projection !== null
+          ? await routeStartFresh({
+              trackerHub,
+              threadId: projection.thread.id,
+              modelSelection: projection.thread.modelSelection,
+              key: randomUUID(),
+              ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
+            })
+          : ({ _tag: "Handoff" } as const);
+      if (route._tag === "OwnerUnknown") {
+        if (!isAtomCommandInterrupted(route.failure)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not check whether a tracker record follows this conversation",
+            description: trackerFailureText(route.failure),
+          });
+        }
+      } else if (route._tag === "StartAgent") {
+        await startAgent(environmentId, route.input);
+      } else {
+        await handoff(command);
       }
     } catch {
       toastManager.add({ type: "error", title: "Could not open the handoff" });
     }
     busyRef.current = false;
     setBusy(false);
+  };
+  const handoff = async (command: ThreadHandoffCommand) => {
+    const result = await dispatch({ environmentId, input: command });
+    if (result._tag === "Success" && command.type === "thread.handoff.start") {
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(environmentId, command.targetThreadId)),
+      });
+    } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: "Could not update the handoff" });
+    }
   };
   if (
     !available ||

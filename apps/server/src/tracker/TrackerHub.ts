@@ -4,12 +4,15 @@ import {
   type TrackerCard,
   type TrackerCardSeen,
   type TrackerDoneDecidingInput,
+  type TrackerAgentStart,
   type TrackerGetWorkInput,
-  type TrackerLaunchPrompt,
   type TrackerLinkedThread,
   type TrackerLinkThreadInput,
   type TrackerPortfolio,
   type TrackerUpdateWatchInput,
+  type TrackerStartAgentInput,
+  type TrackerThreadOwner,
+  type TrackerThreadOwnerInput,
   type TrackerWorkDetail,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -21,6 +24,9 @@ import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const HUB_TIMEOUT = "8 seconds";
+// A start waits about 30 s for the relay to name the new thread, then reports it as still starting.
+const START_POLLS = 30;
+const START_POLL = "1 second";
 const DEFAULT_HUB_URL = "http://hwc-work:8765";
 // Records the hub will not change again; the Tracker shows work that can still move.
 /** The hub's snooze in hours for each button; 0 resumes. */
@@ -35,9 +41,14 @@ export class TrackerHub extends Context.Service<
     readonly work: (
       input: TrackerGetWorkInput,
     ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
-    readonly launchPrompt: (
-      input: TrackerGetWorkInput,
-    ) => Effect.Effect<TrackerLaunchPrompt, TrackerHubError>;
+    /** Fails when the hub cannot say; an unreachable hub never reads as "owns nothing". */
+    readonly threadOwner: (
+      input: TrackerThreadOwnerInput,
+    ) => Effect.Effect<TrackerThreadOwner, TrackerHubError>;
+    /** The hub starts the agent through this host's relay and moves the record to its thread. */
+    readonly startAgent: (
+      input: TrackerStartAgentInput,
+    ) => Effect.Effect<TrackerAgentStart, TrackerHubError>;
     readonly linkThread: (
       input: TrackerLinkThreadInput,
     ) => Effect.Effect<TrackerLinkedThread, TrackerHubError>;
@@ -386,6 +397,41 @@ const ownerFromRefusal = (body: unknown): TrackerLinkedThread | null => {
   return null;
 };
 
+/**
+ * The live record `threadId` on `host` owns, or null. A thread that owns only finished
+ * records owns nothing a new agent could pick up.
+ */
+const threadOwnerFromHub = (portfolio: unknown, host: string, threadId: string): string | null => {
+  for (const work of Object.values(record(record(portfolio).projects)).map(record)) {
+    const thread = record(work.thread);
+    if (
+      text(thread.threadId) === threadId &&
+      text(thread.host) === host &&
+      text(work.id) !== "" &&
+      !TERMINAL_STATUSES.has(text(work.status))
+    ) {
+      return text(work.id);
+    }
+  }
+  return null;
+};
+
+/** Plain words for the hub's refusals of a start. */
+const startRefusal = (code: string, detail: string, host: string): string => {
+  switch (code) {
+    case "agent-start-pending":
+      return "Another agent is already starting for this record. Wait for it to appear, then try again.";
+    case "agent-start-unavailable":
+      return `No tracker relay on ${host} can start agents right now. Check that the relay is running there.`;
+    case "agent-model-unavailable":
+      return `The tracker relay on ${host} is too old to take a model choice. Update the relay, or start without choosing a model.`;
+    case "bad-start":
+      return "The tracker hub refused the start as malformed. Shorten the note and try again.";
+    default:
+      return `The tracker hub did not start the agent: ${detail || "no reason given"}.`;
+  }
+};
+
 /** The hub reports `matched`, `needs_review` or `unknown`; only `needs_review` asks for action. */
 const needsReviewFromHub = (value: unknown): TrackerWorkDetail["needsReview"] => {
   const freshness = record(value);
@@ -486,7 +532,11 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
         Effect.flatMap((response) =>
           response.json.pipe(
             Effect.orElseSucceed(() => null),
-            Effect.map((json) => ({ ok: response.status >= 200 && response.status < 300, json })),
+            Effect.map((json) => ({
+              ok: response.status >= 200 && response.status < 300,
+              status: response.status,
+              json,
+            })),
           ),
         ),
         Effect.timeoutOrElse({
@@ -569,23 +619,70 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
       Effect.withSpan("TrackerHub.portfolio"),
     ),
     work,
-    launchPrompt: Effect.fn("TrackerHub.launchPrompt")(function* ({ workId }) {
-      const path = `/api/projects/${encodeURIComponent(workId)}/prompt`;
-      const prompt = yield* send(path).pipe(
-        Effect.flatMap((response) => Effect.mapError(response.text, refused(path))),
-        Effect.timeoutOrElse({
-          duration: HUB_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              new TrackerHubError({
-                reason: "unreachable",
-                detail: `The tracker hub at ${hubUrl} took too long to answer.`,
-              }),
-            ),
-        }),
-        Effect.scoped,
-      );
-      return { workId, text: prompt };
+    threadOwner: Effect.fn("TrackerHub.threadOwner")(function* ({ threadId }) {
+      const portfolio = record(yield* json("/api/portfolio"));
+      if (typeof portfolio.projects !== "object" || portfolio.projects === null) {
+        return yield* new TrackerHubError({
+          reason: "invalidResponse",
+          detail: "The tracker hub's portfolio lists no records, so ownership is unknown.",
+        });
+      }
+      return { workId: threadOwnerFromHub(portfolio, host, threadId) };
+    }),
+    startAgent: Effect.fn("TrackerHub.startAgent")(function* (input) {
+      const path = `/api/projects/${encodeURIComponent(input.workId)}/start`;
+      const body = {
+        schemaVersion: 1,
+        app: "t3",
+        host,
+        key: input.key,
+        ...(input.request === undefined || input.request.trim() === ""
+          ? {}
+          : { request: input.request }),
+        ...(input.model === undefined ? {} : { model: input.model }),
+      };
+      // Repeating the same key returns the stored start and starts nothing new, so asking
+      // again is how the relay's progress is read.
+      const starting = { host, threadId: null };
+      for (let poll = 0; ; poll += 1) {
+        // Once the hub took the start, a failed progress read means "still starting", not failure.
+        const reply =
+          poll === 0
+            ? yield* post(path, body)
+            : yield* Effect.orElseSucceed(post(path, body), () => null);
+        if (reply === null || (poll > 0 && !reply.ok)) return starting;
+        if (!reply.ok) {
+          if (reply.status === 404) {
+            return yield* new TrackerHubError({
+              reason: "notFound",
+              detail: `The tracker hub has no record ${input.workId}.`,
+            });
+          }
+          const refusal = hubRefusal(reply.json);
+          return yield* new TrackerHubError({
+            reason: "refused",
+            detail: startRefusal(refusal.code, refusal.detail, host),
+          });
+        }
+        const delivery = record(record(reply.json).delivery);
+        const state = text(delivery.state);
+        if (state === "failed") {
+          return yield* new TrackerHubError({
+            reason: "refused",
+            detail: `The agent did not start: ${text(delivery.reason) || "the relay gave no reason"}.`,
+          });
+        }
+        if (state !== "pending" && state !== "delivered") {
+          return yield* new TrackerHubError({
+            reason: "invalidResponse",
+            detail: "The tracker hub did not confirm the start.",
+          });
+        }
+        const threadId = textOrNull(delivery.threadId);
+        const started = { host: text(delivery.host) || host, threadId };
+        if (threadId !== null || poll + 1 >= START_POLLS) return started;
+        yield* Effect.sleep(START_POLL);
+      }
     }),
     linkThread: Effect.fn("TrackerHub.linkThread")(function* (input) {
       // Eric's Link moves ownership (`move`), so the hub would replace any owner. Compare

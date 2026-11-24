@@ -6,8 +6,15 @@ import {
   REVIEW_PROVIDER_INSTANCE_ID,
   type EnvironmentId,
   type OrchestrationV2ThreadProjection,
+  type TrackerStartAgentInput,
 } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { ThreadHandoffCommand } from "@t3tools/client-runtime/state/threads";
+import {
+  agentStillStartingText,
+  routeStartFresh,
+  trackerFailureText,
+} from "@t3tools/client-runtime/tracker-start";
 import {
   latestContextCheckpoint,
   shouldPrepareThreadHandoff,
@@ -18,6 +25,7 @@ import { View } from "react-native";
 import { Notice } from "../../components/ui/Notice";
 import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
+import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -31,10 +39,16 @@ export function CompactHandoffCard(props: {
   const navigation = useNavigation();
   const canOperate = useAtomValue(threadEnvironment.handoff.permissionAtom(environmentId));
   const dispatch = useAtomCommand(threadEnvironment.handoff, { reportFailure: false });
+  const ownerOf = useAtomCommand(serverEnvironment.trackerThreadOwner, { reportFailure: false });
+  const startAgent = useAtomCommand(serverEnvironment.trackerStartAgent, { reportFailure: false });
+  const trackerHub =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+      .trackerHub === true;
   const requested = useRef<string | null>(null);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
   const source = projection?.messages.findLast(
     (message) => message.role === "user" && !message.streaming,
   );
@@ -104,28 +118,60 @@ export function CompactHandoffCard(props: {
     state?.state,
     dispatch,
   ]);
+  const openThread = (threadId: string) =>
+    navigation.dispatch(
+      StackActions.replace("Thread", { environmentId: String(environmentId), threadId }),
+    );
+  const startTrackedAgent = async (input: TrackerStartAgentInput) => {
+    const started = await startAgent({ environmentId, input });
+    if (started._tag === "Failure") {
+      if (!isAtomCommandInterrupted(started)) setError(trackerFailureText(started));
+    } else if (started.value.threadId === null) {
+      setStarting(agentStillStartingText(started.value.host));
+    } else {
+      openThread(started.value.threadId);
+    }
+  };
   const act = async (command: ThreadHandoffCommand) => {
     if (busyRef.current || !canOperate) return;
     busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      const result = await dispatch({ environmentId, input: command });
-      if (result._tag === "Failure") {
-        setError("Could not update the handoff. Try again.");
-      } else if (command.type === "thread.handoff.start") {
-        navigation.dispatch(
-          StackActions.replace("Thread", {
-            environmentId: String(environmentId),
-            threadId: String(command.targetThreadId),
-          }),
-        );
+      const route =
+        command.type === "thread.handoff.start" && projection
+          ? await routeStartFresh({
+              trackerHub,
+              threadId: projection.thread.id,
+              modelSelection: projection.thread.modelSelection,
+              key: uuidv4(),
+              ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
+            })
+          : ({ _tag: "Handoff" } as const);
+      if (route._tag === "OwnerUnknown") {
+        if (!isAtomCommandInterrupted(route.failure)) {
+          setError(
+            `Could not check whether a tracker record follows this conversation. ${trackerFailureText(route.failure)}`,
+          );
+        }
+      } else if (route._tag === "StartAgent") {
+        await startTrackedAgent(route.input);
+      } else {
+        await handoff(command);
       }
     } catch {
       setError("Could not open the handoff. Try again.");
     }
     busyRef.current = false;
     setBusy(false);
+  };
+  const handoff = async (command: ThreadHandoffCommand) => {
+    const result = await dispatch({ environmentId, input: command });
+    if (result._tag === "Failure") {
+      setError("Could not update the handoff. Try again.");
+    } else if (command.type === "thread.handoff.start") {
+      openThread(String(command.targetThreadId));
+    }
   };
   if (available && error && !state)
     return (
@@ -204,6 +250,7 @@ export function CompactHandoffCard(props: {
           }
         />
       </View>
+      {starting && <Notice message={starting} tone="default" onDismiss={() => setStarting(null)} />}
       {error && <Notice message={error} tone="danger" onDismiss={() => setError(null)} />}
     </View>
   );

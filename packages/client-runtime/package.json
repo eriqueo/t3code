@@ -39,6 +39,10 @@
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
     },
+    "./tracker-start": {
+      "types": "./src/trackerStart.ts",
+      "default": "./src/trackerStart.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"

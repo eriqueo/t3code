@@ -49,6 +49,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   // Relinking moves where the hub delivers decisions, so it needs the scope that directs agents.
   [WS_METHODS.trackerLinkThread]: AuthOrchestrationOperateScope,
+  // Starting an agent moves ownership too, and runs a provider on a host.
+  [WS_METHODS.trackerStartAgent]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerAnswerCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerDoneDeciding]: AuthOrchestrationOperateScope,
   // A snooze or cancel decides when, or whether, an agent is woken.

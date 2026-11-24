@@ -1834,9 +1834,13 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshIntervalMs: 2_000,
       idleTtlMs: 0,
     }),
-    trackerLaunchPrompt: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:tracker-launch-prompt",
-      tag: WS_METHODS.trackerGetLaunchPrompt,
+    trackerThreadOwner: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-thread-owner",
+      tag: WS_METHODS.trackerGetThreadOwner,
+    }),
+    trackerStartAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-start-agent",
+      tag: WS_METHODS.trackerStartAgent,
     }),
     trackerLinkThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:tracker-link-thread",

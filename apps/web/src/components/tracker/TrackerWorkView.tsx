@@ -1,4 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -12,22 +13,24 @@ import type {
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, FileTextIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { cn } from "~/lib/utils";
-import { useProjects, useThreadShell } from "~/state/entities";
+import { cn, randomUUID } from "~/lib/utils";
+import { useThreadShell } from "~/state/entities";
 import { serverEnvironment } from "~/state/server";
 import { errorText } from "~/state/tracker";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
 import { Button } from "../ui/button";
-import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Label } from "../ui/label";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { TrackerDecisions } from "./TrackerDecisions";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useTrackerAgentStart, useTrackerModelChoice } from "./useTrackerAgentStart";
 import {
   currentPhase,
   decisionCards,
@@ -211,65 +214,75 @@ function TrackerSummaryLine(props: { work: TrackerWorkDetail }) {
   );
 }
 
+/** The hub starts the agent in the record's workspace and moves the record to its conversation. */
 function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerWorkDetail }) {
-  const projects = useProjects().filter(
-    (project) => project.environmentId === props.environmentId && project.isScratch !== true,
+  const canStart = useAtomValue(
+    serverEnvironment.trackerStartAgent.permissionAtom(props.environmentId),
   );
-  const readPrompt = useAtomCommand(serverEnvironment.trackerLaunchPrompt, {
-    reportFailure: false,
-  });
-  const newThread = useNewThreadHandler();
+  const startAgent = useTrackerAgentStart();
+  const model = useTrackerModelChoice(props.environmentId);
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
+  const noteId = `tracker-launch-note-${props.work.id}`;
 
-  const openDraft = async (projectId: (typeof projects)[number]["id"]) => {
-    const prompt = await readPrompt({
-      environmentId: props.environmentId,
-      input: { workId: props.work.id },
-    });
-    if (prompt._tag !== "Success") {
-      if (!isAtomCommandInterrupted(prompt)) {
-        toastManager.add({
-          type: "error",
-          title: "Could not read the next prompt",
-          description: errorText(squashAtomCommandFailure(prompt)),
-        });
-      }
-      return;
-    }
-    // Opens a draft only: the agent starts when Eric sends it, with the project,
-    // model and workspace he sees in the composer.
-    await newThread(scopeProjectRef(props.environmentId, projectId), {
-      prompt: prompt.value.text,
-    });
-  };
-
-  // React Compiler cannot compile try/finally, so the pending flag clears on the promise.
-  const launch = (projectId: (typeof projects)[number]["id"]) => {
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setOpen(false);
     setPending(true);
-    void openDraft(projectId).finally(() => setPending(false));
+    void startAgent(props.environmentId, {
+      workId: props.work.id,
+      key: randomUUID(),
+      ...(note.trim() === "" ? {} : { request: note.trim() }),
+      ...(model.selection === null ? {} : { model: model.selection }),
+    })
+      .then((started) => {
+        if (started) setNote("");
+      })
+      .finally(() => setPending(false));
   };
 
   return (
-    <Menu>
-      <MenuTrigger
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
         render={
-          <Button size="sm" disabled={pending || projects.length === 0}>
+          <Button size="sm" disabled={pending || !canStart}>
             <PlayIcon />
-            {pending ? "Preparing…" : "Launch Agent"}
+            {pending ? "Starting Agent…" : "Launch Agent"}
           </Button>
         }
       />
-      <MenuPopup align="start">
-        <MenuGroup>
-          <MenuGroupLabel>Start a draft in</MenuGroupLabel>
-          {projects.map((project) => (
-            <MenuItem key={project.id} onClick={() => launch(project.id)}>
-              {project.title}
-            </MenuItem>
-          ))}
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+      <PopoverPopup align="start" width="md">
+        <form className="flex flex-col gap-3" onSubmit={submit}>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={noteId}>Note for the agent</Label>
+            <Textarea
+              id={noteId}
+              rows={3}
+              maxLength={2000}
+              placeholder="Optional"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </div>
+          {model.picker === null ? null : (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm">Model</span>
+              <div>{model.picker}</div>
+            </div>
+          )}
+          <p className="text-muted-foreground text-xs">
+            Your decisions then go to the new conversation.
+          </p>
+          <div>
+            <Button type="submit" size="sm">
+              <PlayIcon />
+              Start Agent
+            </Button>
+          </div>
+        </form>
+      </PopoverPopup>
+    </Popover>
   );
 }
 

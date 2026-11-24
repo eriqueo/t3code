@@ -5,15 +5,19 @@ import { page } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { TrackerWorkView } from "./TrackerWorkView";
 
-vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
-vi.mock("~/state/entities", () => ({
-  useProjects: () => [{ id: "project-1", environmentId: "local", title: "My Project" }],
-  useThreadShell: () => null,
-}));
+vi.mock("~/state/entities", () => ({ useThreadShell: () => null }));
 const command = vi.hoisted(() => vi.fn(async () => ({ _tag: "Success", value: null })));
+const startAgent = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("./useTrackerAgentStart", () => ({
+  useTrackerAgentStart: () => startAgent,
+  useTrackerModelChoice: () => ({
+    selection: { instanceId: "codex", model: "gpt-5.4" },
+    picker: null,
+  }),
+}));
 vi.mock("~/state/server", () => ({
   serverEnvironment: {
-    trackerLaunchPrompt: {},
+    trackerStartAgent: { permissionAtom: () => null },
     trackerAnswerCard: { permissionAtom: () => null },
     trackerDoneDeciding: {},
     trackerUpdateWatch: {},
@@ -51,7 +55,8 @@ const baseWork: TrackerWorkDetail = {
   handoff: { waiting: false, at: null, delivery: null, reason: null },
 };
 
-it("opens the tracker draft menu with its labelled project group", async () => {
+it("asks the hub to start an agent with Eric's note and the chosen model", async () => {
+  startAgent.mockClear();
   const work = baseWork;
   await using screen = await render(
     <TrackerWorkView
@@ -65,8 +70,17 @@ it("opens the tracker draft menu with its labelled project group", async () => {
   // Tracker K6: the header names no task or project kind.
   await expect.element(page.getByText(/^(task|project)$/i)).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Launch Agent" }).click();
-  await expect.element(page.getByRole("group", { name: "Start a draft in" })).toBeVisible();
-  await expect.element(page.getByRole("menuitem", { name: "My Project" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Note for the agent" }).fill("Pick up P2");
+  await page.getByRole("button", { name: "Start Agent" }).click();
+
+  await vi.waitFor(() =>
+    expect(startAgent).toHaveBeenCalledWith("local", {
+      workId: "work-1",
+      key: expect.any(String),
+      request: "Pick up P2",
+      model: { instanceId: "codex", model: "gpt-5.4" },
+    }),
+  );
 });
 
 it("says which release train the work waits for, with its check (tracker K8)", async () => {

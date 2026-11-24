@@ -1,7 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe } from "vite-plus/test";
 
@@ -46,7 +48,8 @@ interface Sent {
   readonly body: unknown;
 }
 
-const hubWith = (routes: Record<string, () => Response>) => {
+/** A route answering `null` drops the connection, as an unreachable hub does. */
+const hubWith = (routes: Record<string, () => Response | null>) => {
   const sent: Array<Sent> = [];
   const client = HttpClient.make((request) => {
     const path = request.url.slice(HUB.length);
@@ -59,9 +62,14 @@ const hubWith = (routes: Record<string, () => Response>) => {
           : null,
     });
     const route = routes[`${request.method} ${path}`];
-    return Effect.succeed(
-      HttpClientResponse.fromWeb(request, route ? route() : new Response(null, { status: 404 })),
-    );
+    const response = route ? route() : new Response(null, { status: 404 });
+    return response === null
+      ? Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, cause: new Error("refused") }),
+          }),
+        )
+      : Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
   const layer = TrackerHub.layerWithHubUrl(HUB).pipe(
     Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
@@ -638,6 +646,114 @@ describe("TrackerHub", () => {
         [{ schemaVersion: 1, expectedRevision: "rev-1" }],
       );
     }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("starts an agent on this host and waits for the relay to name its thread", () => {
+    let posts = 0;
+    const hub = hubWith({
+      "POST /api/projects/t3-tracker/start": () => {
+        posts += 1;
+        return Response.json({
+          key: "press-1",
+          delivery:
+            posts === 1
+              ? { id: "d1", state: "pending", host: "hwc-laptop" }
+              : { id: "d1", state: "delivered", host: "hwc-laptop", threadId: "thread-new" },
+        });
+      },
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      const start = yield* tracker
+        .startAgent({
+          workId: "t3-tracker",
+          key: "press-1",
+          request: "Pick up P2",
+          model: { instanceId: "codex" as never, model: "gpt-5.4" },
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+
+      assert.deepStrictEqual(yield* Fiber.join(start), {
+        host: "hwc-laptop",
+        threadId: "thread-new",
+      });
+      const body = {
+        schemaVersion: 1,
+        app: "t3",
+        host: "hwc-laptop",
+        key: "press-1",
+        request: "Pick up P2",
+        model: { instanceId: "codex", model: "gpt-5.4" },
+      };
+      // The progress read repeats the same key, so the hub starts nothing new.
+      assert.deepStrictEqual(
+        hub.sent.map((sent) => sent.body),
+        [body, body],
+      );
+    }).pipe(Effect.provide(hub.layer));
+  });
+
+  it.effect("says in plain words why the hub refused a start", () => {
+    const refusedWith = (status: number, error: unknown) =>
+      hubWith({
+        "POST /api/projects/t3-tracker/start": () => Response.json({ error }, { status }),
+      }).layer;
+    const start = Effect.gen(function* () {
+      const tracker = yield* TrackerHub.TrackerHub;
+      return yield* Effect.flip(tracker.startAgent({ workId: "t3-tracker", key: "k" }));
+    });
+    return Effect.gen(function* () {
+      for (const [status, code, words] of [
+        [409, "agent-start-pending", "Another agent is already starting"],
+        [409, "agent-start-unavailable", "No tracker relay on hwc-laptop can start agents"],
+        [409, "agent-model-unavailable", "too old to take a model choice"],
+        [400, "bad-start", "refused the start as malformed"],
+      ] as const) {
+        const error = yield* start.pipe(Effect.provide(refusedWith(status, code)));
+        assert.strictEqual(error.reason, "refused");
+        assert.include(error.detail, words);
+      }
+      const missing = yield* start.pipe(Effect.provide(hubWith({}).layer));
+      assert.strictEqual(missing.reason, "notFound");
+      const failed = yield* start.pipe(
+        Effect.provide(
+          hubWith({
+            "POST /api/projects/t3-tracker/start": () =>
+              Response.json({ delivery: { state: "failed", reason: "no workspace" } }),
+          }).layer,
+        ),
+      );
+      assert.include(failed.detail, "The agent did not start: no workspace.");
+    });
+  });
+
+  it.effect("names the live record a thread owns, and fails rather than guess", () => {
+    const portfolio = {
+      projects: {
+        done: { id: "done", status: "complete", thread: { host: "hwc-laptop", threadId: "t1" } },
+        live: { id: "live", status: "active", thread: { host: "hwc-laptop", threadId: "t1" } },
+        away: { id: "away", status: "active", thread: { host: "hwc-work", threadId: "t2" } },
+      },
+    };
+    const owner = (threadId: string) =>
+      Effect.gen(function* () {
+        const tracker = yield* TrackerHub.TrackerHub;
+        return yield* tracker.threadOwner({ threadId: threadId as never });
+      });
+    const reachable = hubWith({ "GET /api/portfolio": () => Response.json(portfolio) }).layer;
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* owner("t1").pipe(Effect.provide(reachable)), {
+        workId: "live",
+      });
+      // A thread on another host is not this server's thread.
+      assert.deepStrictEqual(yield* owner("t2").pipe(Effect.provide(reachable)), {
+        workId: null,
+      });
+      const down = hubWith({ "GET /api/portfolio": () => null }).layer;
+      const error = yield* owner("t1").pipe(Effect.flip, Effect.provide(down));
+      assert.strictEqual(error.reason, "unreachable");
+    });
   });
 
   it.effect("reports a missing record as not found", () => {
