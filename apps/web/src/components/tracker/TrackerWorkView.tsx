@@ -4,12 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  TrackerUpdateWatchInput,
-  TrackerWatch,
-  TrackerWorkDetail,
-} from "@t3tools/contracts";
+import type { EnvironmentId, TrackerWatch, TrackerWorkDetail } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, FileTextIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
@@ -111,24 +106,24 @@ const watchTime = (iso: string) =>
 
 /**
  * What the agent waits on outside the hub (tracker watches). The hub host checks each
- * one and wakes this record's conversation; Eric can hold the wake or drop the watch.
+ * one and wakes this record's conversation, ending its T3 snooze; Eric can drop a watch.
+ * To quiet the conversation meanwhile he snoozes the thread itself, so there is no
+ * second snooze here.
  */
 function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWorkDetail }) {
   const update = useAtomCommand(serverEnvironment.trackerUpdateWatch, { reportFailure: false });
   const [pending, setPending] = useState<string | null>(null);
 
-  const act = async (watch: TrackerWatch, action: TrackerUpdateWatchInput["action"]) => {
-    if (action === "cancel") {
-      const approved = await requestConfirmDialog(
-        `Stop waiting for ${watch.repo}#${watch.number}? The agent will not be woken.`,
-        { variant: "destructive" },
-      );
-      if (approved !== true) return;
-    }
+  const cancel = async (watch: TrackerWatch) => {
+    const approved = await requestConfirmDialog(
+      `Stop waiting for ${watch.repo}#${watch.number}? The agent will not be woken.`,
+      { variant: "destructive" },
+    );
+    if (approved !== true) return;
     setPending(watch.id);
     const result = await update({
       environmentId: props.environmentId,
-      input: { workId: props.work.id, watch: watch.id, action },
+      input: { workId: props.work.id, watch: watch.id, action: "cancel" },
     });
     setPending(null);
     if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
@@ -152,40 +147,11 @@ function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWork
             </span>
           </p>
           <div className="flex flex-wrap gap-2">
-            {watch.snoozedUntil !== null ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending !== null}
-                onClick={() => void act(watch, "resume")}
-              >
-                Resume
-              </Button>
-            ) : (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={pending !== null}
-                  onClick={() => void act(watch, "snooze-day")}
-                >
-                  Snooze 1 Day
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={pending !== null}
-                  onClick={() => void act(watch, "snooze-week")}
-                >
-                  Snooze 1 Week
-                </Button>
-              </>
-            )}
             <Button
               size="sm"
               variant="destructive-outline"
               disabled={pending !== null}
-              onClick={() => void act(watch, "cancel")}
+              onClick={() => void cancel(watch)}
             >
               Cancel
             </Button>

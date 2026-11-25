@@ -279,11 +279,14 @@ export const TrackerDoneDecidingInput = Schema.Struct({
 });
 export type TrackerDoneDecidingInput = typeof TrackerDoneDecidingInput.Type;
 
-/** Eric's snooze, resume or cancel on one watch, as the hub's own page offers. */
+/**
+ * Eric's cancel on one watch. There is no snooze here: he snoozes the T3 conversation,
+ * and the tracker relay ends that snooze when the watch fires.
+ */
 export const TrackerUpdateWatchInput = Schema.Struct({
   workId: TrackerWorkId,
   watch: Schema.String,
-  action: Schema.Literals(["snooze-day", "snooze-week", "resume", "cancel"]),
+  action: Schema.Literals(["cancel"]),
 });
 export type TrackerUpdateWatchInput = typeof TrackerUpdateWatchInput.Type;
 

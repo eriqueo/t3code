@@ -29,8 +29,6 @@ const START_POLLS = 30;
 const START_POLL = "1 second";
 const DEFAULT_HUB_URL = "http://hwc-work:8765";
 // Records the hub will not change again; the Tracker shows work that can still move.
-/** The hub's snooze in hours for each button; 0 resumes. */
-const WATCH_SNOOZE_HOURS = { "snooze-day": 24, "snooze-week": 168, resume: 0 } as const;
 
 const TERMINAL_STATUSES = new Set(["complete", "archived", "superseded", "dropped", "retired"]);
 
@@ -60,7 +58,7 @@ export class TrackerHub extends Context.Service<
     readonly doneDeciding: (
       input: TrackerDoneDecidingInput,
     ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
-    /** Eric's snooze, resume or cancel on a watch, as the hub's own page does. */
+    /** Eric's cancel on a watch, as the hub's own page does. */
     readonly updateWatch: (
       input: TrackerUpdateWatchInput,
     ) => Effect.Effect<TrackerWorkDetail, TrackerHubError>;
@@ -755,15 +753,11 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
       ),
     ),
     updateWatch: Effect.fn("TrackerHub.updateWatch")(function* (input) {
-      const base = `/api/v1/watches/${encodeURIComponent(input.workId)}`;
-      const reply =
-        input.action === "cancel"
-          ? yield* post(base, { schemaVersion: 1, watch: input.watch }, "DELETE")
-          : yield* post(`${base}/snooze`, {
-              schemaVersion: 1,
-              watch: input.watch,
-              hours: WATCH_SNOOZE_HOURS[input.action],
-            });
+      const reply = yield* post(
+        `/api/v1/watches/${encodeURIComponent(input.workId)}`,
+        { schemaVersion: 1, watch: input.watch },
+        "DELETE",
+      );
       if (!reply.ok) {
         const refusal = hubRefusal(reply.json);
         return yield* new TrackerHubError({

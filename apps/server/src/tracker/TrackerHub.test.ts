@@ -512,33 +512,18 @@ describe("TrackerHub", () => {
     assert.deepStrictEqual(TrackerHub.workFromHub({ project: "p" }, context)?.watches, []);
   });
 
-  it.effect("snoozes and cancels a watch through the hub's watch routes", () => {
+  it.effect("cancels a watch through the hub's watch route", () => {
     const hub = hubWith({
       "GET /api/projects/t3-tracker": () => Response.json(project(null)),
-      "POST /api/v1/watches/t3-tracker/snooze": () => Response.json({ schemaVersion: 1 }),
       "DELETE /api/v1/watches/t3-tracker": () => Response.json({ schemaVersion: 1 }),
     });
     return Effect.gen(function* () {
       const tracker = yield* TrackerHub.TrackerHub;
-      yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "snooze-week" });
-      yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "resume" });
       yield* tracker.updateWatch({ workId: "t3-tracker", watch: "w1", action: "cancel" });
       const writes = hub.sent.filter((request) => request.method !== "GET");
       assert.deepStrictEqual(
         writes.map((request) => [request.method, request.url, request.body]),
-        [
-          [
-            "POST",
-            "/api/v1/watches/t3-tracker/snooze",
-            { schemaVersion: 1, watch: "w1", hours: 168 },
-          ],
-          [
-            "POST",
-            "/api/v1/watches/t3-tracker/snooze",
-            { schemaVersion: 1, watch: "w1", hours: 0 },
-          ],
-          ["DELETE", "/api/v1/watches/t3-tracker", { schemaVersion: 1, watch: "w1" }],
-        ],
+        [["DELETE", "/api/v1/watches/t3-tracker", { schemaVersion: 1, watch: "w1" }]],
       );
     }).pipe(Effect.provide(hub.layer));
   });
