@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ProviderDriverError } from "./Errors.ts";
 import type {
   ProviderDriver,
@@ -75,6 +76,8 @@ it.layer(Layer.mock(SecretResolver.SecretResolver)({}))(
         Effect.gen(function* () {
           calls.push(input);
           const identity = `${role}:${calls.length}`;
+          const unexpectedUse = () =>
+            Effect.die("Registry fixture must not run provider operations.");
           lifecycle.push(`create:${identity}`);
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
@@ -90,14 +93,27 @@ it.layer(Layer.mock(SecretResolver.SecretResolver)({}))(
             },
             displayName: input.displayName,
             enabled: input.enabled,
-            get orchestrationAdapter(): never {
-              throw new Error("Registry fixture must not start a session.");
+            orchestrationAdapter: {
+              instanceId: input.instanceId,
+              driver: ProviderDriverKind.make("codex"),
+              getCapabilities: unexpectedUse,
+              planSelectionTransition: unexpectedUse,
+              openSession: unexpectedUse,
             },
-            get snapshot(): never {
-              throw new Error("Registry fixture must not probe a provider.");
+            snapshot: {
+              getSnapshot: unexpectedUse(),
+              refresh: unexpectedUse(),
+              streamChanges: Stream.fromEffect(unexpectedUse()),
+              resolveMaintenance: unexpectedUse,
+              applyUsageLimits: unexpectedUse,
             },
-            get textGeneration(): never {
-              throw new Error("Registry fixture must not generate text.");
+            textGeneration: {
+              generateTranscriptionPostProcessing: unexpectedUse,
+              generateCommitMessage: unexpectedUse,
+              generatePrContent: unexpectedUse,
+              generateBranchName: unexpectedUse,
+              generateThreadTitle: unexpectedUse,
+              generateReviewGuide: unexpectedUse,
             },
           };
         }),

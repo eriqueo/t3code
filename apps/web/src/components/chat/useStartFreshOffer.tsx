@@ -8,6 +8,7 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { routeStartFresh, trackerFailureText } from "@t3tools/client-runtime/tracker-start";
 import * as DateTime from "effect/DateTime";
 import { Minimize2Icon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 import { newThreadId, randomUUID } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -32,6 +33,8 @@ export function useStartFreshOffer(input: {
 }): ComposerBannerStackItem | null {
   const { environmentId, projection } = input;
   const navigate = useNavigate();
+  const gt = useGT();
+  const resolve = useMessages();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const ownerOf = useAtomCommand(serverEnvironment.trackerThreadOwner, { reportFailure: false });
   const startAgent = useTrackerAgentStart();
@@ -78,13 +81,14 @@ export function useStartFreshOffer(input: {
         newThreadId: newThreadId(),
         key: randomUUID(),
         ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
+        resolve,
       });
       if (route._tag === "OwnerUnknown") {
         if (!isAtomCommandInterrupted(route.failure)) {
           toastManager.add({
             type: "error",
-            title: "Could not check whether a tracker record follows this conversation",
-            description: trackerFailureText(route.failure),
+            title: gt("Could not check whether a tracker record follows this conversation"),
+            description: trackerFailureText(route.failure, resolve),
           });
         }
       } else if (route._tag === "StartAgent") {
@@ -100,11 +104,11 @@ export function useStartFreshOffer(input: {
             params: buildThreadRouteParams(scopeThreadRef(environmentId, route.input.threadId)),
           });
         } else if (!isAtomCommandInterrupted(created)) {
-          toastManager.add({ type: "error", title: "Could not start a new thread" });
+          toastManager.add({ type: "error", title: gt("Could not start a new thread") });
         }
       }
     } catch {
-      toastManager.add({ type: "error", title: "Could not start a new thread" });
+      toastManager.add({ type: "error", title: gt("Could not start a new thread") });
     }
     busyRef.current = false;
     setBusy(false);
@@ -113,14 +117,15 @@ export function useStartFreshOffer(input: {
     id: `start-fresh:${source.id}`,
     variant: "info",
     icon: <Minimize2Icon />,
-    title: "Start a fresh conversation?",
-    description:
+    title: gt("Start a fresh conversation?"),
+    description: gt(
       "This conversation is long and has been idle. A new one starts without its history",
-    dismissLabel: "Keep full history",
+    ),
+    dismissLabel: gt("Keep full history"),
     onDismiss: () => setDismissed(key),
     actions: (
       <Button size="sm" disabled={busy} onClick={() => void startFresh()}>
-        Start fresh
+        <T>Start fresh</T>
       </Button>
     ),
   };

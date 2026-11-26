@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { pickModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -31,14 +32,16 @@ import { toastManager } from "../ui/toast";
 export function useTrackerAgentStart() {
   const start = useAtomCommand(serverEnvironment.trackerStartAgent, { reportFailure: false });
   const navigate = useNavigate();
+  const gt = useGT();
+  const resolve = useMessages();
   return async (environmentId: EnvironmentId, input: TrackerStartAgentInput) => {
     const result = await start({ environmentId, input });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         toastManager.add({
           type: "error",
-          title: "Could not start the agent",
-          description: trackerFailureText(result),
+          title: gt("Could not start the agent"),
+          description: trackerFailureText(result, resolve),
         });
       }
       return false;
@@ -46,8 +49,8 @@ export function useTrackerAgentStart() {
     if (result.value.threadId === null) {
       toastManager.add({
         type: "info",
-        title: "Agent starting",
-        description: agentStillStartingText(result.value.host),
+        title: gt("Agent starting"),
+        description: agentStillStartingText(result.value.host, resolve),
       });
       return true;
     }

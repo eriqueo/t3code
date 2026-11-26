@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, TrackerCard, TrackerWorkDetail } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { serverEnvironment } from "~/state/server";
@@ -43,6 +44,8 @@ function DecisionCard(props: {
 }) {
   const { card } = props;
   const answer = useAtomCommand(serverEnvironment.trackerAnswerCard, { reportFailure: false });
+  const gt = useGT();
+  const resolve = useMessages();
   const [comment, setComment] = useState("");
   const [pending, setPending] = useState(false);
   const question = card.kind === "question";
@@ -60,7 +63,7 @@ function DecisionCard(props: {
     } else if (!isAtomCommandInterrupted(result)) {
       toastManager.add({
         type: "error",
-        title: "Your answer was not saved",
+        title: gt("Your answer was not saved"),
         description: errorText(squashAtomCommandFailure(result)),
       });
     }
@@ -79,7 +82,7 @@ function DecisionCard(props: {
         <span className="text-muted-foreground capitalize">{card.kind}</span>
         {card.phase ? <span className="text-muted-foreground">{card.phase}</span> : null}
         <span className={decided ? "text-success-foreground" : "text-warning-foreground"}>
-          {cardStatusLabel(card)}
+          {cardStatusLabel(card, resolve)}
           {card.decidedAt ? ` · ${trackerWhen(card.decidedAt)}` : ""}
         </span>
       </div>
@@ -89,17 +92,19 @@ function DecisionCard(props: {
       </div>
       {decided ? null : (
         <>
-          <CardField label="Background" text={card.context} />
+          <CardField label={gt("Background")} text={card.context} />
           <CardField
-            label={question ? "What your answer changes" : "If you approve"}
+            label={question ? gt("What your answer changes") : gt("If you approve")}
             text={card.plan}
           />
-          <CardField label="Risk" text={card.risk} />
+          <CardField label={gt("Risk", { $context: "decision card field" })} text={card.risk} />
         </>
       )}
       {card.recommend ? (
         <p className="text-sm">
-          <span className="text-muted-foreground">Recommendation: </span>
+          <span className="text-muted-foreground">
+            <T>Recommendation:</T>{" "}
+          </span>
           <span className="font-medium">{card.recommend}</span>
         </p>
       ) : null}
@@ -108,7 +113,9 @@ function DecisionCard(props: {
           {card.comments.map((entry) => (
             <li key={`${entry.at ?? ""}\n${entry.text}`} className="text-sm">
               <span className="text-muted-foreground text-xs">
-                You{entry.at ? ` · ${trackerWhen(entry.at)}` : ""}
+                {entry.at
+                  ? gt("You · {at}", { at: trackerWhen(entry.at) })
+                  : gt("You", { $context: "author of a comment" })}
               </span>
               <p className="whitespace-pre-wrap">{entry.text}</p>
             </li>
@@ -124,15 +131,23 @@ function DecisionCard(props: {
             onChange={(event) => setComment(event.target.value)}
             placeholder={
               question
-                ? "Your answer. It goes into the next prompt."
-                : "Comment or instruction (optional). It goes into the next prompt."
+                ? gt("Your answer. It goes into the next prompt.")
+                : gt("Comment or instruction (optional). It goes into the next prompt.")
             }
-            aria-label={`${question ? "Answer" : "Comment on"} ${card.title}`}
+            aria-label={
+              question
+                ? gt("Answer {title}", { title: card.title })
+                : gt("Comment on {title}", { title: card.title })
+            }
           />
           <div className="flex flex-wrap items-center gap-2">
             {question ? (
               <Button size="sm" disabled={busy || !hasText} onClick={() => void submit(null)}>
-                {decided ? "Add to the Answer" : "Answer"}
+                {decided ? (
+                  <T>Add to the Answer</T>
+                ) : (
+                  <T context="verb: answer the question">Answer</T>
+                )}
               </Button>
             ) : decided ? (
               <>
@@ -142,7 +157,7 @@ function DecisionCard(props: {
                   disabled={busy}
                   onClick={() => void submit("open")}
                 >
-                  Reopen
+                  <T>Reopen</T>
                 </Button>
                 <Button
                   size="sm"
@@ -150,13 +165,13 @@ function DecisionCard(props: {
                   disabled={busy || !hasText}
                   onClick={() => void submit(null)}
                 >
-                  Save Comment
+                  <T>Save Comment</T>
                 </Button>
               </>
             ) : (
               <>
                 <Button size="sm" disabled={busy} onClick={() => void submit("approved")}>
-                  Approve
+                  <T>Approve</T>
                 </Button>
                 <Button
                   size="sm"
@@ -164,7 +179,7 @@ function DecisionCard(props: {
                   disabled={busy}
                   onClick={() => void submit("rejected")}
                 >
-                  Reject
+                  <T>Reject</T>
                 </Button>
                 <Button
                   size="sm"
@@ -172,11 +187,15 @@ function DecisionCard(props: {
                   disabled={busy || !hasText}
                   onClick={() => void submit(null)}
                 >
-                  Comment Only
+                  <T>Comment Only</T>
                 </Button>
               </>
             )}
-            {pending ? <span className="text-muted-foreground text-xs">Saving…</span> : null}
+            {pending ? (
+              <span className="text-muted-foreground text-xs">
+                <T>Saving…</T>
+              </span>
+            ) : null}
           </div>
         </>
       ) : (
@@ -193,10 +212,10 @@ function DecisionCard(props: {
             }
           >
             <ArrowUpRightIcon />
-            Answer on the Hub
+            <T>Answer on the Hub</T>
           </Button>
           <p className="pt-1 text-muted-foreground text-xs">
-            This card has its own review form, which only the hub draws.
+            <T>This card has its own review form, which only the hub draws.</T>
           </p>
         </div>
       )}
@@ -211,6 +230,8 @@ function DoneDeciding(props: {
   canWrite: boolean;
 }) {
   const done = useAtomCommand(serverEnvironment.trackerDoneDeciding, { reportFailure: false });
+  const gt = useGT();
+  const resolve = useMessages();
   const [pending, setPending] = useState(false);
   const { handoff } = props.work;
 
@@ -224,7 +245,7 @@ function DoneDeciding(props: {
     if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
       toastManager.add({
         type: "error",
-        title: "Your answers were not sent",
+        title: gt("Your answers were not sent"),
         description: errorText(squashAtomCommandFailure(result)),
       });
     }
@@ -233,7 +254,7 @@ function DoneDeciding(props: {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-muted/40 p-3">
       <p className="min-w-0 flex-1 text-sm" role="status">
-        {doneDecidingText(props.work)}
+        {doneDecidingText(props.work, resolve)}
       </p>
       <Button
         size="sm"
@@ -241,7 +262,13 @@ function DoneDeciding(props: {
         disabled={pending || !props.canWrite || handoff.delivery === "pending"}
         onClick={() => void submit()}
       >
-        {pending ? "Sending…" : handoff.waiting ? "Send Again" : "Done Deciding: Wake the Agent"}
+        {pending ? (
+          <T>Sending…</T>
+        ) : handoff.waiting ? (
+          <T>Send Again</T>
+        ) : (
+          <T>Done Deciding: Wake the Agent</T>
+        )}
       </Button>
     </div>
   );
@@ -254,7 +281,11 @@ export function TrackerDecisions(props: { environmentId: EnvironmentId; work: Tr
   );
   const { open, decided } = decisionCards(props.work.cards);
   if (open.length === 0 && decided.length === 0 && !props.work.handoff.waiting) {
-    return <p className="text-muted-foreground text-sm">Nothing is waiting on you.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">
+        <T>Nothing is waiting on you.</T>
+      </p>
+    );
   }
   return (
     <div className="flex flex-col gap-3">

@@ -6,6 +6,7 @@ import {
 import type { ScopedThreadRef, TrackerPortfolio, TrackerWorkDetail } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon } from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -33,9 +34,17 @@ export function TrackerHubNotice(props: { error: string; stale: boolean }) {
   return (
     <Alert variant="warning">
       <AlertTitle>
-        {props.stale ? "Showing the last answer from the tracker hub" : "Tracker hub not reachable"}
+        {props.stale ? (
+          <T>Showing the last answer from the tracker hub</T>
+        ) : (
+          <T>Tracker hub not reachable</T>
+        )}
       </AlertTitle>
-      <AlertDescription>{props.error} This view retries by itself.</AlertDescription>
+      <AlertDescription>
+        <T>
+          <Var>{props.error}</Var> This view retries by itself.
+        </T>
+      </AlertDescription>
     </Alert>
   );
 }
@@ -54,6 +63,7 @@ function LinkThisConversation(props: {
   const canLink = useAtomValue(
     serverEnvironment.trackerLinkThread.permissionAtom(props.threadRef.environmentId),
   );
+  const gt = useGT();
   const [pending, setPending] = useState(false);
   const current = props.work.thread;
 
@@ -71,12 +81,15 @@ function LinkThisConversation(props: {
     });
     setPending(false);
     if (result._tag === "Success") {
-      toastManager.add({ type: "success", title: `Linked to ${props.work.title}` });
+      toastManager.add({
+        type: "success",
+        title: gt("Linked to {title}", { title: props.work.title }),
+      });
       props.onLinked();
     } else if (!isAtomCommandInterrupted(result)) {
       toastManager.add({
         type: "error",
-        title: "Could not link this conversation",
+        title: gt("Could not link this conversation"),
         description: errorText(squashAtomCommandFailure(result)),
       });
     }
@@ -87,13 +100,15 @@ function LinkThisConversation(props: {
       <div>
         <Button size="sm" disabled={pending || !canLink} onClick={() => void submit()}>
           <LinkIcon />
-          {pending ? "Linking…" : "Link This Conversation"}
+          {pending ? <T>Linking…</T> : <T>Link This Conversation</T>}
         </Button>
       </div>
       {current ? (
         <p className="text-muted-foreground text-xs">
-          Replaces {current.title || current.threadId} on {current.host}. Your decisions then come
-          to this conversation instead.
+          <T>
+            Replaces <Var>{current.title || current.threadId}</Var> on <Var>{current.host}</Var>.
+            Your decisions then come to this conversation instead.
+          </T>
         </p>
       ) : null}
     </div>
@@ -106,19 +121,25 @@ function AgentActions(props: {
   work: TrackerWorkDetail;
   onSend: (text: string) => Promise<void>;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const [sending, setSending] = useState<TrackerActionId | null>(null);
   const [triedRefused, setTriedRefused] = useState(false);
   // Read on every render, so the message clears once the hub names this thread the owner.
-  const refusal = trackerActionRefusal(props.work, props.threadRef.threadId);
+  const refusal = trackerActionRefusal(props.work, props.threadRef.threadId, resolve);
 
   const send = async (action: TrackerAction) => {
     if (refusal !== null) {
       setTriedRefused(true);
       return;
     }
+    const label = resolve(action.label);
     if (action.confirm) {
       const approved = await requestConfirmDialog(
-        `${action.label} ${props.work.title}? The agent runs project-closeout, which closes the record.`,
+        gt("{action} {title}? The agent runs project-closeout, which closes the record.", {
+          action: label,
+          title: props.work.title,
+        }),
         { variant: "destructive" },
       );
       if (approved !== true) return;
@@ -132,11 +153,14 @@ function AgentActions(props: {
       );
     setSending(null);
     if (result === null) {
-      toastManager.add({ type: "success", title: `${action.label} sent to this conversation` });
+      toastManager.add({
+        type: "success",
+        title: gt("{action} sent to this conversation", { action: label }),
+      });
     } else {
       toastManager.add({
         type: "error",
-        title: `Could not send ${action.label}`,
+        title: gt("Could not send {action}", { action: label }),
         description: result,
       });
     }
@@ -144,7 +168,9 @@ function AgentActions(props: {
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="border-border border-b pb-1 font-serif text-base">Ask the Agent</h3>
+      <h3 className="border-border border-b pb-1 font-serif text-base">
+        <T>Ask the Agent</T>
+      </h3>
       <div className="flex flex-wrap gap-2">
         {trackerActions(props.work).map((action) => (
           <Button
@@ -154,7 +180,7 @@ function AgentActions(props: {
             disabled={sending !== null}
             onClick={() => void send(action)}
           >
-            {sending === action.id ? "Sending…" : action.label}
+            {sending === action.id ? <T>Sending…</T> : resolve(action.label)}
           </Button>
         ))}
       </div>
@@ -168,6 +194,8 @@ function AgentActions(props: {
 }
 
 function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: string) => void }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const [query, setQuery] = useState("");
   const works = props.portfolio.works.filter(
     (work) => work.status === "active" && workMatchesQuery(work, query),
@@ -175,15 +203,17 @@ function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: strin
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
-        <h2 className="font-serif text-lg">This conversation is not linked</h2>
+        <h2 className="font-serif text-lg">
+          <T>This conversation is not linked</T>
+        </h2>
         <p className="text-muted-foreground text-sm">
-          Pick the work it belongs to. Nothing changes on the hub until you press Link.
+          <T>Pick the work it belongs to. Nothing changes on the hub until you press Link.</T>
         </p>
       </div>
       <input
         className="h-9 rounded-md border border-input bg-transparent px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:h-8 sm:text-sm"
-        placeholder="Filter work by name"
-        aria-label="Filter work by name"
+        placeholder={gt("Filter work by name")}
+        aria-label={gt("Filter work by name")}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -196,12 +226,14 @@ function WorkPicker(props: { portfolio: TrackerPortfolio; onPick: (workId: strin
               onClick={() => props.onPick(work.id)}
             >
               <span className="min-w-0 flex-1 truncate">{work.title}</span>
-              <TrackerStatusText {...workStatus(work)} />
+              <TrackerStatusText {...workStatus(work, resolve)} />
             </button>
           </li>
         ))}
         {works.length === 0 ? (
-          <li className="px-2 py-3 text-muted-foreground text-sm">No active work matches.</li>
+          <li className="px-2 py-3 text-muted-foreground text-sm">
+            <T>No active work matches.</T>
+          </li>
         ) : null}
       </ul>
     </div>
@@ -244,7 +276,7 @@ export function TrackerPanel(props: {
               <div>
                 <Button size="sm" variant="ghost" onClick={() => setBrowsingId(null)}>
                   <ArrowLeftIcon />
-                  All Work
+                  <T>All Work</T>
                 </Button>
               </div>
             ) : null}
@@ -280,7 +312,7 @@ export function TrackerPanel(props: {
                     onClick={() => void navigate({ to: "/tracker", search: { work: shownId } })}
                   >
                     <PanelTopOpenIcon />
-                    Open Tracker
+                    <T>Open Tracker</T>
                   </Button>
                 </>
               }

@@ -1,10 +1,12 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
 import { compareSidebarUserSections } from "./components/Sidebar.logic";
 import { getClientSettings, persistClientSettingsUpdate } from "./hooks/useSettings";
 import { toastManager } from "./components/ui/toast";
+import { m } from "./i18n/messages";
 
 /**
  * User-named sidebar sections are a client setting keyed by scoped thread key.
@@ -35,8 +37,8 @@ export function setThreadSection(threadRef: ScopedThreadRef, section: string | n
   }).catch(() => {
     toastManager.add({
       type: "error",
-      title: "Section not saved",
-      description: "Could not save the section assignment. Try moving the thread again.",
+      title: m(msg("Section not saved")),
+      description: m(msg("Could not save the section assignment. Try moving the thread again.")),
     });
   });
 }

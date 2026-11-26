@@ -5,6 +5,8 @@ import type {
   TrackerThreadOwner,
   TrackerThreadOwnerInput,
 } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { CreateThreadInput } from "./operations/commands.ts";
 import { squashAtomCommandFailure, type AtomCommandResult } from "./state/runtime.ts";
@@ -45,6 +47,7 @@ export async function routeStartFresh(input: {
   readonly ownerOf: (
     input: TrackerThreadOwnerInput,
   ) => Promise<AtomCommandResult<TrackerThreadOwner, unknown>>;
+  readonly resolve?: MFunctionType;
 }): Promise<StartFreshRoute> {
   const { thread } = input;
   const newThread = {
@@ -52,7 +55,7 @@ export async function routeStartFresh(input: {
     input: {
       threadId: input.newThreadId,
       projectId: thread.projectId,
-      title: "New thread",
+      title: (input.resolve ?? mFallback)(msg("New thread")),
       modelSelection: thread.modelSelection,
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
@@ -71,13 +74,21 @@ export async function routeStartFresh(input: {
 }
 
 /** The hub's own words for a failed tracker call. */
-export function trackerFailureText(result: Parameters<typeof squashAtomCommandFailure>[0]) {
+export function trackerFailureText(
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+  resolve: MFunctionType = mFallback,
+) {
   const error = squashAtomCommandFailure(result);
   if (typeof error === "object" && error !== null && "detail" in error) {
     return String(error.detail);
   }
-  return error instanceof Error ? error.message : "The tracker hub did not answer.";
+  return error instanceof Error ? error.message : resolve(msg("The tracker hub did not answer."));
 }
 
-export const agentStillStartingText = (host: string) =>
-  `The agent is still starting on ${host}. It will appear in your threads, and as the record's conversation on the Tracker page.`;
+export const agentStillStartingText = (host: string, resolve: MFunctionType = mFallback) =>
+  resolve(
+    msg(
+      "The agent is still starting on {host}. It will appear in your threads, and as the record's conversation on the Tracker page.",
+      { host },
+    ),
+  );

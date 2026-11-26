@@ -8,6 +8,7 @@ import type { EnvironmentId, TrackerWatch, TrackerWorkDetail } from "@t3tools/co
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, FileTextIcon, MessageSquareIcon, PlayIcon } from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -60,6 +61,7 @@ export function TrackerProgressBar(props: {
   progress: { done: number; total: number };
   colour: string | null;
 }) {
+  const gt = useGT();
   const fraction = progressFraction(props.progress);
   if (fraction === null) return null;
   return (
@@ -70,7 +72,7 @@ export function TrackerProgressBar(props: {
         aria-valuemin={0}
         aria-valuemax={props.progress.total}
         aria-valuenow={props.progress.done}
-        aria-label="Phases done"
+        aria-label={gt("Phases done")}
       >
         <div
           className="h-full rounded-full bg-primary"
@@ -112,11 +114,15 @@ const watchTime = (iso: string) =>
  */
 function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWorkDetail }) {
   const update = useAtomCommand(serverEnvironment.trackerUpdateWatch, { reportFailure: false });
+  const gt = useGT();
+  const resolve = useMessages();
   const [pending, setPending] = useState<string | null>(null);
 
   const cancel = async (watch: TrackerWatch) => {
     const approved = await requestConfirmDialog(
-      `Stop waiting for ${watch.repo}#${watch.number}? The agent will not be woken.`,
+      gt("Stop waiting for {pullRequest}? The agent will not be woken.", {
+        pullRequest: `${watch.repo}#${watch.number}`,
+      }),
       { variant: "destructive" },
     );
     if (approved !== true) return;
@@ -129,7 +135,7 @@ function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWork
     if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
       toastManager.add({
         type: "error",
-        title: "Not saved",
+        title: gt("Not saved"),
         description: errorText(squashAtomCommandFailure(result)),
       });
     }
@@ -140,9 +146,9 @@ function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWork
       {props.work.watches.map((watch) => (
         <li key={watch.id} className="flex flex-col gap-1.5" data-tracker-watch={watch.id}>
           <p className="text-sm">
-            {`${watch.repo}#${watch.number} to merge`}
+            {gt("{pullRequest} to merge", { pullRequest: `${watch.repo}#${watch.number}` })}
             <span className="block text-muted-foreground text-xs">
-              {watchStateLabel(watch, watchTime)}
+              {watchStateLabel(watch, watchTime, resolve)}
               {watch.note ? ` · ${watch.note}` : ""}
             </span>
           </p>
@@ -153,7 +159,7 @@ function TrackerWatches(props: { environmentId: EnvironmentId; work: TrackerWork
               disabled={pending !== null}
               onClick={() => void cancel(watch)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
         </li>
@@ -190,6 +196,7 @@ function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerW
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
+  const gt = useGT();
   const noteId = `tracker-launch-note-${props.work.id}`;
 
   const submit = (event: FormEvent) => {
@@ -214,36 +221,40 @@ function LaunchAgentButton(props: { environmentId: EnvironmentId; work: TrackerW
         render={
           <Button size="sm" disabled={pending || !canStart}>
             <PlayIcon />
-            {pending ? "Starting Agent…" : "Launch Agent"}
+            {pending ? <T>Starting Agent…</T> : <T>Launch Agent</T>}
           </Button>
         }
       />
       <PopoverPopup align="start" width="md">
         <form className="flex flex-col gap-3" onSubmit={submit}>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={noteId}>Note for the agent</Label>
+            <Label htmlFor={noteId}>
+              <T>Note for the agent</T>
+            </Label>
             <Textarea
               id={noteId}
               rows={3}
               maxLength={2000}
-              placeholder="Optional"
+              placeholder={gt("Optional")}
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />
           </div>
           {model.picker === null ? null : (
             <div className="flex flex-col gap-1.5">
-              <span className="text-sm">Model</span>
+              <span className="text-sm">
+                <T>Model</T>
+              </span>
               <div>{model.picker}</div>
             </div>
           )}
           <p className="text-muted-foreground text-xs">
-            Your decisions then go to the new conversation.
+            <T>Your decisions then go to the new conversation.</T>
           </p>
           <div>
             <Button type="submit" size="sm">
               <PlayIcon />
-              Start Agent
+              <T>Start Agent</T>
             </Button>
           </div>
         </form>
@@ -261,15 +272,26 @@ function LinkedConversation(props: { environmentId: EnvironmentId; work: Tracker
   const shell = useThreadShell(threadRef);
 
   if (thread === null) {
-    return <p className="text-muted-foreground text-sm">No conversation is linked yet.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">
+        <T>No conversation is linked yet.</T>
+      </p>
+    );
   }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{shell?.title ?? (thread.title || thread.threadId)}</p>
         <p className="text-muted-foreground text-xs">
-          Receives your decisions · {thread.host}
-          {threadRef !== null && shell === null ? " · not found in this environment" : ""}
+          {threadRef !== null && shell === null ? (
+            <T>
+              Receives your decisions · <Var>{thread.host}</Var> · not found in this environment
+            </T>
+          ) : (
+            <T>
+              Receives your decisions · <Var>{thread.host}</Var>
+            </T>
+          )}
         </p>
       </div>
       {threadRef !== null && shell !== null ? (
@@ -284,7 +306,7 @@ function LinkedConversation(props: { environmentId: EnvironmentId; work: Tracker
           }
         >
           <MessageSquareIcon />
-          Open Conversation
+          <T>Open Conversation</T>
         </Button>
       ) : null}
     </div>
@@ -303,12 +325,17 @@ export function TrackerWorkView(props: {
   agentActions?: ReactNode;
 }) {
   const { work } = props;
-  const status = workStatus({
-    waitingOnYou: work.waitingOnYou,
-    overdue: false,
-    status: work.status,
-    state: "",
-  });
+  const gt = useGT();
+  const resolve = useMessages();
+  const status = workStatus(
+    {
+      waitingOnYou: work.waitingOnYou,
+      overdue: false,
+      status: work.status,
+      state: "",
+    },
+    resolve,
+  );
   const navigate = useNavigate();
   const phase = currentPhase(work.phases);
   const { open: openCards, decided: decidedCards } = decisionCards(work.cards);
@@ -344,7 +371,9 @@ export function TrackerWorkView(props: {
         {work.needsReview ? (
           <TrackerStatusText
             tone="attention"
-            label={`Record needs review: ${work.needsReview.reasons.join("; ")}`}
+            label={gt("Record needs review: {reasons}", {
+              reasons: work.needsReview.reasons.join("; "),
+            })}
           />
         ) : null}
         {work.trains.map((train) => (
@@ -353,7 +382,12 @@ export function TrackerWorkView(props: {
             className="text-muted-foreground text-xs"
             data-tracker-train={train.repo}
           >
-            <span className="block">{`Waiting for the train: ${train.repo} (${train.waiting} waiting)`}</span>
+            <span className="block">
+              {gt("Waiting for the train: {repo} ({waiting} waiting)", {
+                repo: train.repo,
+                waiting: train.waiting,
+              })}
+            </span>
             <span className="block break-all font-mono">{train.check}</span>
           </p>
         ))}
@@ -365,13 +399,13 @@ export function TrackerWorkView(props: {
             render={<a href={`${hubPage}/overview`} target="_blank" rel="noreferrer" />}
           >
             <ArrowUpRightIcon />
-            Open on Hub
+            <T>Open on Hub</T>
           </Button>
         </div>
       </header>
 
       {work.docs.length > 0 ? (
-        <Section title="Docs">
+        <Section title={gt("Docs")}>
           <div className="flex flex-wrap gap-2">
             {work.docs.map((doc) => (
               <Button
@@ -396,16 +430,18 @@ export function TrackerWorkView(props: {
 
       {props.density === "page" ? (
         openCards.length > 0 || decidedCards.length > 0 || work.handoff.waiting ? (
-          <Section title="Decisions">
+          <Section title={gt("Decisions")}>
             <TrackerDecisions environmentId={props.environmentId} work={work} />
           </Section>
         ) : null
       ) : openCards.length > 0 || (decidedCards.length > 0 && !work.handoff.waiting) ? (
-        <Section title="Waiting on You">
+        <Section title={gt("Waiting on You")}>
           <ul className="flex flex-col gap-1.5 text-sm">
             {openCards.map((card) => (
               <li key={card.id} className="flex items-baseline gap-2">
-                <span className="text-warning-foreground">Decide:</span>
+                <span className="text-warning-foreground">
+                  <T>Decide:</T>
+                </span>
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left underline-offset-4 hover:underline"
@@ -422,7 +458,7 @@ export function TrackerWorkView(props: {
                   className="text-left underline-offset-4 hover:underline"
                   onClick={openDecisions}
                 >
-                  Answered, not sent yet: press Done Deciding
+                  <T>Answered, not sent yet: press Done Deciding</T>
                 </button>
               </li>
             ) : null}
@@ -430,10 +466,12 @@ export function TrackerWorkView(props: {
         </Section>
       ) : null}
 
-      <Section title="Roadmap">
+      <Section title={gt("Roadmap")}>
         {work.phases.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            A task with no phases. Status: {work.status}.
+            <T>
+              A task with no phases. Status: <Var>{work.status}</Var>.
+            </T>
           </p>
         ) : (
           <ol className="flex flex-col">
@@ -462,12 +500,14 @@ export function TrackerWorkView(props: {
                     {item.title}
                   </span>
                   {isCurrent ? (
-                    <span className="shrink-0 font-medium text-primary text-xs">Now</span>
+                    <span className="shrink-0 font-medium text-primary text-xs">
+                      <T context="roadmap: the phase being worked on">Now</T>
+                    </span>
                   ) : null}
                   {/* Strike-through and "Now" carry status; only a wait says something new. */}
                   {item.status === "waiting" ? (
                     <span className="shrink-0 text-warning-foreground text-xs">
-                      {phaseStatusLabel(item)}
+                      {phaseStatusLabel(item, resolve)}
                     </span>
                   ) : null}
                 </li>
@@ -476,12 +516,14 @@ export function TrackerWorkView(props: {
           </ol>
         )}
         {phase === null && work.phases.length > 0 ? (
-          <p className="text-muted-foreground text-sm">Every phase is done.</p>
+          <p className="text-muted-foreground text-sm">
+            <T>Every phase is done.</T>
+          </p>
         ) : null}
       </Section>
 
       {work.watches.length > 0 ? (
-        <Section title="Waiting For">
+        <Section title={gt("Waiting For")}>
           <TrackerWatches environmentId={props.environmentId} work={work} />
         </Section>
       ) : null}
@@ -489,7 +531,7 @@ export function TrackerWorkView(props: {
       {props.agentActions}
 
       {props.density === "page" ? (
-        <Section title="Conversation">
+        <Section title={gt("Conversation")}>
           <LinkedConversation environmentId={props.environmentId} work={work} />
           <div>
             <LaunchAgentButton environmentId={props.environmentId} work={work} />
@@ -499,7 +541,7 @@ export function TrackerWorkView(props: {
 
       {/* The sidebar judges progress from the roadmap; the run journal lives on the page. */}
       {props.density === "page" && work.briefs.length > 0 ? (
-        <Section title="Runs">
+        <Section title={gt("Runs", { $context: "agent run history" })}>
           <ul className="flex flex-col gap-3">
             {work.briefs.slice(0, 8).map((brief) => (
               <li key={brief.id} className="flex flex-col gap-0.5 text-sm">
@@ -512,7 +554,9 @@ export function TrackerWorkView(props: {
                 <p className="text-muted-foreground">{brief.summary}</p>
                 {brief.wrong.map((entry) => (
                   <p key={entry} className="text-destructive-foreground text-xs">
-                    Went wrong: {entry}
+                    <T>
+                      Went wrong: <Var>{entry}</Var>
+                    </T>
                   </p>
                 ))}
               </li>

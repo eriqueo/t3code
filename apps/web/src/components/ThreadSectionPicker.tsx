@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
@@ -47,8 +48,9 @@ function ThreadSectionPickerContent(props: { target: ScopedThreadRef; onDone: ()
   const sections = useClientSettings((s) => s.sidebarThreadSections);
   const sectionNames = listThreadSectionNames(sections);
   const currentSection = readThreadSection(props.target);
+  const gt = useGT();
   const [name, setName] = useState("");
-  const title = readThreadShell(props.target)?.title ?? "this thread";
+  const title = readThreadShell(props.target)?.title ?? gt("this thread");
   const choose = (section: string | null) => {
     setThreadSection(props.target, section);
     props.onDone();
@@ -56,11 +58,13 @@ function ThreadSectionPickerContent(props: { target: ScopedThreadRef; onDone: ()
   return (
     <DialogPopup className="max-w-md">
       <DialogHeader>
-        <DialogTitle>Move to section</DialogTitle>
+        <DialogTitle>
+          <T>Move to section</T>
+        </DialogTitle>
         <DialogDescription>
           {currentSection
-            ? `"${title}" is in ${currentSection}.`
-            : `Choose a sidebar section for "${title}".`}
+            ? gt('"{title}" is in {section}.', { title, section: currentSection })
+            : gt('Choose a sidebar section for "{title}".', { title })}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -82,8 +86,8 @@ function ThreadSectionPickerContent(props: { target: ScopedThreadRef; onDone: ()
           ) : null}
           <Input
             autoFocus
-            aria-label="New section name"
-            placeholder="New section name"
+            aria-label={gt("New section name")}
+            placeholder={gt("New section name")}
             value={name}
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => {
@@ -98,14 +102,14 @@ function ThreadSectionPickerContent(props: { target: ScopedThreadRef; onDone: ()
       <DialogFooter>
         {currentSection ? (
           <Button variant="ghost" className="me-auto" onClick={() => choose(null)}>
-            Remove from section
+            <T>Remove from section</T>
           </Button>
         ) : null}
         <Button variant="outline" onClick={props.onDone}>
-          Cancel
+          <T>Cancel</T>
         </Button>
         <Button disabled={name.trim().length === 0} onClick={() => choose(name)}>
-          Move
+          <T context="verb: move the thread into the section">Move</T>
         </Button>
       </DialogFooter>
     </DialogPopup>

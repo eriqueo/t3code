@@ -1,5 +1,6 @@
 import type { EnvironmentId, TrackerPortfolio } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { ArrowLeftIcon } from "lucide-react";
 
 import { useTrackerEnvironmentId, useTrackerPortfolio, useTrackerWork } from "~/state/tracker";
@@ -32,9 +33,13 @@ function WaitingOnYou(props: { portfolio: TrackerPortfolio; onOpen: (workId: str
   const items = props.portfolio.attention;
   return (
     <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <h2 className="border-border border-b pb-1 font-serif text-lg">Waiting on You</h2>
+      <h2 className="border-border border-b pb-1 font-serif text-lg">
+        <T>Waiting on You</T>
+      </h2>
       {items.length === 0 ? (
-        <p className="pt-3 text-muted-foreground text-sm">Nothing needs your decision.</p>
+        <p className="pt-3 text-muted-foreground text-sm">
+          <T>Nothing needs your decision.</T>
+        </p>
       ) : (
         <ul className="flex flex-col pt-1">
           {items.map((item) => (
@@ -54,12 +59,19 @@ function WaitingOnYou(props: { portfolio: TrackerPortfolio; onOpen: (workId: str
                       : "font-mono text-muted-foreground text-xs tabular-nums"
                   }
                 >
-                  {item.expired ? "Expired " : "Due "}
-                  {item.due}
+                  {item.expired ? (
+                    <T>
+                      Expired <Var>{item.due}</Var>
+                    </T>
+                  ) : (
+                    <T>
+                      Due <Var>{item.due}</Var>
+                    </T>
+                  )}
                 </span>
               ) : null}
               <Button size="xs" variant="outline" onClick={() => props.onOpen(item.workId)}>
-                Open
+                <T context="verb: open the work item">Open</T>
               </Button>
             </li>
           ))}
@@ -74,16 +86,22 @@ function DomainFilter(props: {
   active: string | null;
   onChange: (domain: string | null) => void;
 }) {
-  const sections = domainSections(props.portfolio, null);
+  const gt = useGT();
+  const resolve = useMessages();
+  const sections = domainSections(props.portfolio, null, resolve);
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by domain">
+    <div
+      className="flex flex-wrap items-center gap-1.5"
+      role="group"
+      aria-label={gt("Filter by domain")}
+    >
       <Button
         size="xs"
         variant={props.active === null ? "secondary" : "ghost"}
         aria-pressed={props.active === null}
         onClick={() => props.onChange(null)}
       >
-        All
+        <T context="filter: every domain">All</T>
       </Button>
       {sections.map((section) => (
         <Button
@@ -110,6 +128,8 @@ function DomainFilter(props: {
 
 function DomainSection(props: { section: TrackerDomainSection; onOpen: (workId: string) => void }) {
   const { section } = props;
+  const gt = useGT();
+  const resolve = useMessages();
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-baseline gap-3 border-border border-b pb-1">
@@ -120,8 +140,12 @@ function DomainSection(props: { section: TrackerDomainSection; onOpen: (workId: 
           {section.label}
         </h2>
         <span className="text-muted-foreground text-xs">
-          {section.works.length} live
-          {section.needYou > 0 ? ` · ${section.needYou} waiting on you` : ""}
+          {section.needYou > 0
+            ? gt("{live} live · {waiting} waiting on you", {
+                live: section.works.length,
+                waiting: section.needYou,
+              })
+            : gt("{live} live", { live: section.works.length })}
         </span>
       </div>
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -133,7 +157,7 @@ function DomainSection(props: { section: TrackerDomainSection; onOpen: (workId: 
               onClick={() => props.onOpen(work.id)}
             >
               <span className="line-clamp-2 font-medium text-sm">{work.title}</span>
-              <TrackerStatusText {...workStatus(work)} />
+              <TrackerStatusText {...workStatus(work, resolve)} />
               <span className="mt-auto block w-full">
                 <TrackerProgressBar progress={work.progress} colour={section.colour} />
               </span>
@@ -157,7 +181,7 @@ function WorkDetail(props: {
       <div>
         <Button size="sm" variant="ghost" onClick={props.onBack}>
           <ArrowLeftIcon />
-          All Work
+          <T>All Work</T>
         </Button>
       </div>
       {work.error ? <TrackerHubNotice error={work.error} stale={work.value !== null} /> : null}
@@ -179,16 +203,22 @@ export function TrackerPage() {
   const environmentId = useTrackerEnvironmentId();
   const portfolio = useTrackerPortfolio(environmentId);
   const { search, openWork, closeWork, setDomain } = useTrackerNavigation();
+  const gt = useGT();
+  const resolve = useMessages();
 
   if (environmentId === null) {
     return (
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
         <Empty className="flex-1">
           <EmptyHeader className="max-w-md">
-            <EmptyTitle>Tracker is not available here</EmptyTitle>
+            <EmptyTitle>
+              <T>Tracker is not available here</T>
+            </EmptyTitle>
             <EmptyDescription>
-              This environment's server does not serve the tracker. Update it, then reopen this
-              page.
+              <T>
+                This environment's server does not serve the tracker. Update it, then reopen this
+                page.
+              </T>
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -196,7 +226,9 @@ export function TrackerPage() {
     );
   }
 
-  const sections = portfolio.value ? domainSections(portfolio.value, search.domain ?? null) : [];
+  const sections = portfolio.value
+    ? domainSections(portfolio.value, search.domain ?? null, resolve)
+    : [];
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -205,10 +237,14 @@ export function TrackerPage() {
           {search.work === undefined ? (
             <>
               <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                <h1 className="font-serif text-3xl">Tracker</h1>
+                <h1 className="font-serif text-3xl">
+                  <T context="page title: the project tracker">Tracker</T>
+                </h1>
                 {portfolio.value ? (
                   <span className="text-muted-foreground text-sm">
-                    {portfolio.value.works.filter((work) => work.status === "active").length} live
+                    {gt("{live} live", {
+                      live: portfolio.value.works.filter((work) => work.status === "active").length,
+                    })}
                   </span>
                 ) : null}
               </header>
@@ -227,7 +263,9 @@ export function TrackerPage() {
                     <DomainSection key={section.id} section={section} onOpen={openWork} />
                   ))}
                   {sections.length === 0 ? (
-                    <p className="text-muted-foreground text-sm">No live work in this domain.</p>
+                    <p className="text-muted-foreground text-sm">
+                      <T>No live work in this domain.</T>
+                    </p>
                   ) : null}
                 </>
               ) : portfolio.loading ? (

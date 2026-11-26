@@ -10,6 +10,9 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg, useMessages } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 import { primaryServerConfigAtom, serverEnvironment } from "./server";
 
@@ -22,20 +25,25 @@ export interface TrackerRead<A> {
 
 const EMPTY_READ = Atom.make(AsyncResult.initial<never, never>());
 
-function toRead<A>(result: AsyncResult.AsyncResult<A, unknown>): TrackerRead<A> {
+function toRead<A>(
+  result: AsyncResult.AsyncResult<A, unknown>,
+  resolve: MessageResolver,
+): TrackerRead<A> {
   const value = AsyncResult.getOrElse(result, () => null);
   return {
     value,
-    error: AsyncResult.isFailure(result) ? errorText(squashAtomCommandFailure(result)) : null,
+    error: AsyncResult.isFailure(result)
+      ? errorText(squashAtomCommandFailure(result), resolve)
+      : null,
     loading: value === null && !AsyncResult.isFailure(result),
   };
 }
 
-export function errorText(error: unknown): string {
+export function errorText(error: unknown, resolve: MessageResolver = m): string {
   if (typeof error === "object" && error !== null && "detail" in error) {
     return String(error.detail);
   }
-  return error instanceof Error ? error.message : "The tracker hub did not answer.";
+  return error instanceof Error ? error.message : resolve(msg("The tracker hub did not answer."));
 }
 
 /** The primary environment, when its server can reach a tracker hub. */
@@ -49,12 +57,14 @@ export function useTrackerEnvironmentId(): EnvironmentId | null {
 export function useTrackerPortfolio(
   environmentId: EnvironmentId | null,
 ): TrackerRead<TrackerPortfolio> {
+  const resolve = useMessages();
   return toRead(
     useAtomValue(
       environmentId === null
         ? EMPTY_READ
         : serverEnvironment.trackerPortfolio({ environmentId, input: {} }),
     ),
+    resolve,
   );
 }
 
@@ -156,11 +166,13 @@ export function useTrackerWork(
   environmentId: EnvironmentId | null,
   workId: string | null,
 ): TrackerRead<TrackerWorkDetail> {
+  const resolve = useMessages();
   return toRead(
     useAtomValue(
       environmentId === null || workId === null
         ? EMPTY_READ
         : serverEnvironment.trackerWork({ environmentId, input: { workId } }),
     ),
+    resolve,
   );
 }

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/tracker-start";
 import { shouldOfferStartFresh } from "@t3tools/shared/startFresh";
 import * as DateTime from "effect/DateTime";
+import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 import { Notice } from "../../components/ui/Notice";
@@ -33,6 +34,8 @@ export function StartFreshCard(props: {
 }) {
   const { projection, environmentId } = props;
   const navigation = useNavigation();
+  const gt = useGT();
+  const resolve = useMessages();
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const ownerOf = useAtomCommand(serverEnvironment.trackerThreadOwner, { reportFailure: false });
   const startAgent = useAtomCommand(serverEnvironment.trackerStartAgent, { reportFailure: false });
@@ -82,9 +85,9 @@ export function StartFreshCard(props: {
   const startTrackedAgent = async (input: TrackerStartAgentInput) => {
     const started = await startAgent({ environmentId, input });
     if (started._tag === "Failure") {
-      if (!isAtomCommandInterrupted(started)) setError(trackerFailureText(started));
+      if (!isAtomCommandInterrupted(started)) setError(trackerFailureText(started, resolve));
     } else if (started.value.threadId === null) {
-      setStarting(agentStillStartingText(started.value.host));
+      setStarting(agentStillStartingText(started.value.host, resolve));
     } else {
       openThread(started.value.threadId);
     }
@@ -101,11 +104,14 @@ export function StartFreshCard(props: {
         newThreadId: ThreadId.make(uuidv4()),
         key: uuidv4(),
         ownerOf: (ownerInput) => ownerOf({ environmentId, input: ownerInput }),
+        resolve,
       });
       if (route._tag === "OwnerUnknown") {
         if (!isAtomCommandInterrupted(route.failure)) {
           setError(
-            `Could not check whether a tracker record follows this conversation. ${trackerFailureText(route.failure)}`,
+            gt("Could not check whether a tracker record follows this conversation. {reason}", {
+              reason: trackerFailureText(route.failure, resolve),
+            }),
           );
         }
       } else if (route._tag === "StartAgent") {
@@ -117,10 +123,10 @@ export function StartFreshCard(props: {
         });
         if (created._tag === "Success") openThread(String(route.input.threadId));
         else if (!isAtomCommandInterrupted(created))
-          setError("Could not start a new thread. Try again.");
+          setError(gt("Could not start a new thread. Try again."));
       }
     } catch {
-      setError("Could not start a new thread. Try again.");
+      setError(gt("Could not start a new thread. Try again."));
     }
     busyRef.current = false;
     setBusy(false);
@@ -137,18 +143,20 @@ export function StartFreshCard(props: {
   return (
     <View className="mx-3 mb-2 gap-2">
       <Notice
-        message="This conversation is long and has been idle. A new one starts without its history."
+        message={gt(
+          "This conversation is long and has been idle. A new one starts without its history.",
+        )}
         tone="default"
       />
       <View className="flex-row flex-wrap gap-2">
         <Button
-          label="Start fresh"
+          label={gt("Start fresh")}
           tone="primary"
           disabled={busy}
           onPress={() => void startFresh()}
         />
         <Button
-          label="Keep full history"
+          label={gt("Keep full history")}
           tone="text"
           disabled={busy}
           onPress={() => setDismissed(key)}
