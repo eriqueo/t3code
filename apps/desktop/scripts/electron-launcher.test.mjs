@@ -38,6 +38,7 @@ async function verifyDesktopChildStop(signal, forwardedArgs = []) {
     NodePath.join(scripts, "start-electron.mjs"),
   );
   NodeFS.writeFileSync(NodePath.join(scripts, "build-browser-secret.mjs"), "");
+  NodeFS.writeFileSync(NodePath.join(scripts, "build-apple-speech.mjs"), "");
   NodeFS.writeFileSync(
     NodePath.join(scripts, "electron-launcher.mjs"),
     `import fs from 'node:fs';export const desktopDir=${JSON.stringify(directory)};export function resolveElectronLaunchCommand(args){fs.writeFileSync(${JSON.stringify(argumentsPath)},JSON.stringify(args));return {electronPath:${JSON.stringify(process.execPath)},args:[${JSON.stringify(childPath)}]}}`,
