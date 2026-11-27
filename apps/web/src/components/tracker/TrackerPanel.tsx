@@ -3,7 +3,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef, TrackerPortfolio, TrackerWorkDetail } from "@t3tools/contracts";
+import type {
+  ScopedThreadRef,
+  TrackerAction,
+  TrackerPortfolio,
+  TrackerWorkDetail,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon, UnlinkIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -20,13 +25,9 @@ import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import {
   linkedWorkIdForThread,
-  trackerActionMessage,
   trackerActionRefusal,
-  trackerActions,
   workMatchesQuery,
   workStatus,
-  type TrackerAction,
-  type TrackerActionId,
 } from "./tracker.logic";
 import { TrackerStatusText, TrackerWorkView } from "./TrackerWorkView";
 
@@ -175,35 +176,28 @@ function AgentActions(props: {
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const [sending, setSending] = useState<TrackerActionId | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
   const [triedRefused, setTriedRefused] = useState(false);
   // Read on every render, so the message clears once the hub names this thread the owner.
   const refusal = trackerActionRefusal(props.work, props.threadRef.threadId, resolve);
+  // The hub's list (`agent::record_actions`); this pane keeps none of its own.
+  const actions = props.work.actions;
 
   const send = async (action: TrackerAction) => {
     if (refusal !== null) {
       setTriedRefused(true);
       return;
     }
-    const label = resolve(action.label);
-    if (action.confirm) {
-      // Names the work item and its goal: Close Out ends the record, not this conversation.
-      const approved = await requestConfirmDialog(
-        gt(
-          "{action} closes the work item {title}, not only this conversation. Its goal: {goal} The agent runs project-closeout, which removes its checkouts and scratch.",
-          { action: label, title: props.work.title, goal: props.work.goal },
-        ),
-        { variant: "destructive" },
-      );
+    const label = action.label;
+    if (action.confirm !== null) {
+      const approved = await requestConfirmDialog(action.confirm, { variant: "destructive" });
       if (approved !== true) return;
     }
     setSending(action.id);
-    const result = await props
-      .onSend(trackerActionMessage(action.id, props.work.id, props.threadRef.threadId))
-      .then(
-        () => null,
-        (error: unknown) => errorText(error),
-      );
+    const result = await props.onSend(action.message).then(
+      () => null,
+      (error: unknown) => errorText(error),
+    );
     setSending(null);
     if (result === null) {
       toastManager.add({
@@ -224,19 +218,25 @@ function AgentActions(props: {
       <h3 className="border-border border-b pb-1 font-serif text-base">
         <T>Ask the Agent</T>
       </h3>
-      <div className="flex flex-wrap gap-2">
-        {trackerActions(props.work).map((action) => (
-          <Button
-            key={action.id}
-            size="sm"
-            variant={action.confirm ? "destructive-outline" : "outline"}
-            disabled={sending !== null}
-            onClick={() => void send(action)}
-          >
-            {sending === action.id ? <T>Sending…</T> : resolve(action.label)}
-          </Button>
-        ))}
-      </div>
+      {actions === undefined ? (
+        <p className="text-muted-foreground text-xs">
+          <T>This tracker hub lists no actions yet. Update the hub to use these buttons.</T>
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {actions.map((action) => (
+            <Button
+              key={action.id}
+              size="sm"
+              variant={action.confirm !== null ? "destructive-outline" : "outline"}
+              disabled={sending !== null}
+              onClick={() => void send(action)}
+            >
+              {sending === action.id ? <T>Sending…</T> : action.label}
+            </Button>
+          ))}
+        </div>
+      )}
       {triedRefused && refusal !== null ? (
         <p role="status" className="text-muted-foreground text-xs">
           {refusal}

@@ -342,6 +342,20 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
       })),
     thread: linkedThreadFromHub(record(work.handoff).thread),
     closeRefusal: textOrNull(work.closeRefusal),
+    // The hub's own list; an older hub sends none, which is not the same as an empty list.
+    ...(Array.isArray(work.actions)
+      ? {
+          actions: list(work.actions)
+            .map(record)
+            .map((action) => ({
+              id: text(action.id),
+              label: text(action.label),
+              confirm: textOrNull(action.confirm),
+              message: text(action.message),
+            }))
+            .filter((action) => action.id !== "" && action.message !== ""),
+        }
+      : {}),
     handoff: handoffFromHub(work.handoff),
   };
 };

@@ -10,9 +10,7 @@ import {
   linkedWorkIdForThread,
   progressFraction,
   resumableThreadId,
-  trackerActionMessage,
   trackerActionRefusal,
-  trackerActions,
   trackerDocUrl,
   trackerCardSeen,
   trackerSummary,
@@ -144,64 +142,6 @@ describe("tracker logic", () => {
     expect(currentPhase([phase("P1", "done"), phase("P2", "dropped")])).toBeNull();
   });
 
-  it("offers roadmap and handoff only to records with phases, and confirms only Close Out", () => {
-    const phased = {
-      status: "active",
-      closeRefusal: null,
-      phases: [
-        {
-          id: "P1",
-          title: "Ship",
-          status: "next",
-          planned: null,
-          done: null,
-          terminal: true,
-          wait: null,
-        },
-      ],
-    };
-    expect(trackerActions(phased).map((action) => action.id)).toEqual([
-      "next-step",
-      "tidy",
-      "handoff",
-      "grill",
-      "prove-it",
-      "status",
-      "wait-what",
-      "close-out",
-    ]);
-    const task = { phases: [], status: "active", closeRefusal: null };
-    expect(trackerActions(task).map((action) => action.id)).toEqual([
-      "next-step",
-      "grill",
-      "prove-it",
-      "status",
-      "wait-what",
-      "close-out",
-    ]);
-    expect(
-      trackerActions(phased)
-        .filter((action) => action.confirm)
-        .map((action) => action.id),
-    ).toEqual(["close-out"]);
-  });
-
-  // standing-work-items, 2026-11-27: Close Out reached datax-v3-map, a record whose close
-  // would have stopped its weekly refresh. A standing or closed record offers none.
-  it("offers Close Out only on a record the hub says can close now", () => {
-    const standing = {
-      phases: [],
-      status: "active",
-      closeRefusal: "datax-v3-map is standing, so it cannot be closed: the weekly refresh runs.",
-    };
-    expect(trackerActions(standing).map((action) => action.id)).not.toContain("close-out");
-    expect(trackerActions(standing).map((action) => action.id)).toContain("next-step");
-    for (const status of ["complete", "archived", "superseded", "dropped"]) {
-      const closed = { phases: [], status, closeRefusal: null };
-      expect(trackerActions(closed).map((action) => action.id)).not.toContain("close-out");
-    }
-  });
-
   it("sends actions only from the conversation that owns the record", () => {
     const owner = { host: "hwc-work", threadId: "thread-1", title: "CRM", linkedAt: null };
     expect(trackerActionRefusal({ thread: owner }, "thread-1")).toBeNull();
@@ -317,26 +257,5 @@ describe("tracker logic", () => {
     expect(workMatchesQuery(record, "work memory")).toBe(true);
     expect(workMatchesQuery(record, "  Memory_Ownership ")).toBe(true);
     expect(workMatchesQuery(record, "memory tracker")).toBe(false);
-  });
-
-  it("names the skill, the action, the record and the thread in each message", () => {
-    expect(trackerActionMessage("next-step", "t3-tracker", "thread-1")).toBe(
-      "Use project-tracker: sidebar action `next-step` on record `t3-tracker` from thread `thread-1`.",
-    );
-    expect(trackerActionMessage("tidy", "t3-tracker", "thread-1")).toBe(
-      "Use project-tracker: sidebar action `tidy` on record `t3-tracker` from thread `thread-1`.",
-    );
-    // Status and Wait, What? ask for an explanation and no work, so they name no skill.
-    const status = trackerActionMessage("status", "t3-tracker", "thread-1");
-    expect(status).toContain("record `t3-tracker`");
-    expect(status).toContain("Do no new work and change nothing.");
-    expect(status).not.toContain("project-tracker");
-    const again = trackerActionMessage("wait-what", "t3-tracker", "thread-1");
-    expect(again).toContain("that last message did not land");
-    expect(again).toContain("Do no new work.");
-    expect(again).not.toContain("project-tracker");
-    expect(trackerActionMessage("prove-it", "t3-tracker", "thread-1")).toBe(
-      "Use prove-it on your latest substantive result in this conversation: the last plan, diagnosis, findings, report or code change you gave, not a status note or your reply to this message. Name that target in one sentence, then start the review. If a newer message from Eric changed the subject, say which result you would review and ask first (record `t3-tracker`, thread `thread-1`).",
-    );
   });
 });

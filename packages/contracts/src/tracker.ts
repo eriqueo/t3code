@@ -186,6 +186,17 @@ export const TrackerWatch = Schema.Struct({
 });
 export type TrackerWatch = typeof TrackerWatch.Type;
 
+/** One agent action of a record, as the hub defines it; the text it sends stays English. */
+export const TrackerAction = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  /** The sentence Eric confirms before it is sent, or null when it needs none. */
+  confirm: Schema.NullOr(Schema.String),
+  /** The full message sent into the record's conversation. */
+  message: Schema.String,
+});
+export type TrackerAction = typeof TrackerAction.Type;
+
 export const TrackerWorkDetail = Schema.Struct({
   host: Schema.String,
   hubUrl: Schema.String,
@@ -219,6 +230,12 @@ export const TrackerWorkDetail = Schema.Struct({
    * or null. The sidebar shows it in place of Close Out; it never words its own.
    */
   closeRefusal: Schema.NullOr(Schema.String),
+  /**
+   * The record's agent actions as the hub lists them (`agent::record_actions`): the one
+   * producer, which the hub page draws too. Absent when the hub serves none (an older hub);
+   * the side pane then says so and offers no buttons, rather than keep a list of its own.
+   */
+  actions: Schema.optionalKey(Schema.Array(TrackerAction)),
   /** Eric's last "Done deciding" and how its delivery went. */
   handoff: TrackerHandoffState,
 });

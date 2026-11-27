@@ -296,6 +296,32 @@ describe("TrackerHub", () => {
     assert.deepStrictEqual(TrackerHub.workFromHub({ project: "p" }, context)?.trains, []);
   });
 
+  // The hub is the one producer of a record's actions (standing-work-items, 2026-11-27).
+  it("carries the hub's actions as given, and none from a hub that lists none", () => {
+    const close = {
+      id: "close-out",
+      label: "Close Out",
+      confirm: "Close Out closes the work item p, not only this conversation.",
+      message: "Use project-tracker: sidebar action `close-out` on record `p` from thread `t1`.",
+    };
+    const status = {
+      id: "status",
+      label: "Status",
+      confirm: null,
+      message: "Where is record `p` now?",
+    };
+    const work = TrackerHub.workFromHub(
+      { project: "p", actions: [status, close, { label: "x" }] },
+      context,
+    );
+    assert.deepStrictEqual(work?.actions, [status, close]);
+    assert.strictEqual(TrackerHub.workFromHub({ project: "p" }, context)?.actions, undefined);
+    assert.deepStrictEqual(
+      TrackerHub.workFromHub({ project: "p", actions: [] }, context)?.actions,
+      [],
+    );
+  });
+
   it("lists the record's documents and drops entries without a path", () => {
     const work = TrackerHub.workFromHub(
       {
