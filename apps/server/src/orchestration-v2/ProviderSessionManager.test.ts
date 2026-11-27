@@ -2808,6 +2808,45 @@ it.effect.each([
     }),
 );
 
+it.effect("an instance with host tools disabled opens without a T3 credential", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("investigator-host-tools");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.deepEqual(yield* Ref.get(mcpConfigs), [undefined]);
+      yield* manager.close(providerSessionId);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          mcpConfigs,
+          serverSettingsLayer: ServerSettings.layerTest({
+            providerInstances: {
+              [modelSelection.instanceId]: { driver: CODEX_DRIVER, hostTools: "disabled" },
+            },
+          }).pipe(Layer.orDie),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 withholds the preview capability when agent browser access is off",
   () =>

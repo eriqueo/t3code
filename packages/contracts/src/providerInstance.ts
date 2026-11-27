@@ -132,6 +132,8 @@ export const ProviderInstanceConfig = Schema.Struct({
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
+  /** Withhold T3 host tools from this instance on both launch and reattachment. */
+  hostTools: Schema.optionalKey(Schema.Literal("disabled")),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
