@@ -8,7 +8,9 @@ import {
   type TrackerGetWorkInput,
   type TrackerLinkedThread,
   type TrackerLinkThreadInput,
+  type TrackerUnlinkThreadInput,
   type TrackerPortfolio,
+  TRACKER_TERMINAL_STATUSES,
   type TrackerUpdateWatchInput,
   type TrackerStartAgentInput,
   type TrackerThreadOwner,
@@ -29,8 +31,7 @@ const START_POLLS = 30;
 const START_POLL = "1 second";
 const DEFAULT_HUB_URL = "http://hwc-work:8765";
 // Records the hub will not change again; the Tracker shows work that can still move.
-
-const TERMINAL_STATUSES = new Set(["complete", "archived", "superseded", "dropped", "retired"]);
+const TERMINAL_STATUSES = TRACKER_TERMINAL_STATUSES;
 
 export class TrackerHub extends Context.Service<
   TrackerHub,
@@ -50,6 +51,10 @@ export class TrackerHub extends Context.Service<
     readonly linkThread: (
       input: TrackerLinkThreadInput,
     ) => Effect.Effect<TrackerLinkedThread, TrackerHubError>;
+    /** This conversation leaves the record; the hub refuses when another one owns it. */
+    readonly unlinkThread: (
+      input: TrackerUnlinkThreadInput,
+    ) => Effect.Effect<void, TrackerHubError>;
     /** Saves Eric's answer on one card, as the hub's own page does. */
     readonly answerCard: (
       input: TrackerAnswerCardInput,
@@ -336,6 +341,7 @@ export const workFromHub = (value: unknown, context: HubReadContext): TrackerWor
         delivery: textOrNull(entry.delivery),
       })),
     thread: linkedThreadFromHub(record(work.handoff).thread),
+    closeRefusal: textOrNull(work.closeRefusal),
     handoff: handoffFromHub(work.handoff),
   };
 };
@@ -730,6 +736,22 @@ const make = Effect.fn("TrackerHub.make")(function* (hubUrl: string) {
         });
       }
       return linked;
+    }),
+    unlinkThread: Effect.fn("TrackerHub.unlinkThread")(function* (input) {
+      const reply = yield* post(`/api/projects/${encodeURIComponent(input.workId)}/unlink`, {
+        host,
+        id: input.threadId,
+      });
+      if (!reply.ok) {
+        const refusal = hubRefusal(reply.json);
+        return yield* new TrackerHubError({
+          reason: refusal.code === "owned-by" ? "linkChanged" : "refused",
+          detail:
+            refusal.code === "owned-by"
+              ? "Another conversation owns this record, so this one has nothing to unlink."
+              : `The tracker hub did not unlink it: ${refusal.detail || "no reason given"}.`,
+        });
+      }
     }),
     answerCard: Effect.fn("TrackerHub.answerCard")((input) =>
       humanWrite(

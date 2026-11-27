@@ -2080,6 +2080,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:tracker-link-thread",
       tag: WS_METHODS.trackerLinkThread,
     }),
+    trackerUnlinkThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:tracker-unlink-thread",
+      tag: WS_METHODS.trackerUnlinkThread,
+    }),
     trackerAnswerCard: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:tracker-answer-card",
       tag: WS_METHODS.trackerAnswerCard,

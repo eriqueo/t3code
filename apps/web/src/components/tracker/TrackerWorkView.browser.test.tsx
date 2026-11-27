@@ -54,6 +54,7 @@ const baseWork: TrackerWorkDetail = {
   trains: [],
   watches: [],
   thread: null,
+  closeRefusal: null,
   handoff: { waiting: false, at: null, delivery: null, reason: null },
 };
 

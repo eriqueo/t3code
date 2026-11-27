@@ -421,6 +421,7 @@ import {
   TrackerAgentStart,
   TrackerLinkedThread,
   TrackerLinkThreadInput,
+  TrackerUnlinkThreadInput,
   TrackerPortfolio,
   TrackerUpdateWatchInput,
   TrackerStartAgentInput,
@@ -661,6 +662,7 @@ export const WS_METHODS = {
   trackerGetThreadOwner: "tracker.getThreadOwner",
   trackerStartAgent: "tracker.startAgent",
   trackerLinkThread: "tracker.linkThread",
+  trackerUnlinkThread: "tracker.unlinkThread",
   trackerAnswerCard: "tracker.answerCard",
   trackerDoneDeciding: "tracker.doneDeciding",
   trackerUpdateWatch: "tracker.updateWatch",
@@ -1232,6 +1234,12 @@ const WsTrackerStartAgentRpc = Rpc.make(WS_METHODS.trackerStartAgent, {
 const WsTrackerLinkThreadRpc = Rpc.make(WS_METHODS.trackerLinkThread, {
   payload: TrackerLinkThreadInput,
   success: TrackerLinkedThread,
+  error: trackerRpcError,
+});
+
+const WsTrackerUnlinkThreadRpc = Rpc.make(WS_METHODS.trackerUnlinkThread, {
+  payload: TrackerUnlinkThreadInput,
+  success: Schema.Void,
   error: trackerRpcError,
 });
 
@@ -2643,6 +2651,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTrackerGetThreadOwnerRpc,
   WsTrackerStartAgentRpc,
   WsTrackerLinkThreadRpc,
+  WsTrackerUnlinkThreadRpc,
   WsTrackerAnswerCardRpc,
   WsTrackerDoneDecidingRpc,
   WsTrackerUpdateWatchRpc,

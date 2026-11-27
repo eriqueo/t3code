@@ -107,6 +107,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.trackerGetThreadOwner]: "tracker",
   [WS_METHODS.trackerStartAgent]: "tracker",
   [WS_METHODS.trackerLinkThread]: "tracker",
+  [WS_METHODS.trackerUnlinkThread]: "tracker",
   [WS_METHODS.trackerAnswerCard]: "tracker",
   [WS_METHODS.trackerDoneDeciding]: "tracker",
   [WS_METHODS.trackerUpdateWatch]: "tracker",

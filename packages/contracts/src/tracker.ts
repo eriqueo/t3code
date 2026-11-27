@@ -7,6 +7,15 @@ import { ModelSelection } from "./modelSelection.ts";
  * The tracker hub owns these records. T3 reads them through its own server so a
  * remote browser never needs a route to the hub, and never stores a copy.
  */
+/** The hub's end states: a record in one of them is closed and takes no close again. */
+export const TRACKER_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "complete",
+  "archived",
+  "superseded",
+  "dropped",
+  "retired",
+]);
+
 export const TrackerWorkId = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
 );
@@ -205,6 +214,11 @@ export const TrackerWorkDetail = Schema.Struct({
   watches: Schema.Array(TrackerWatch),
   /** The one conversation the hub delivers Eric's decisions to. */
   thread: Schema.NullOr(TrackerLinkedThread),
+  /**
+   * The hub's sentence for why no close may end this record now (a standing record),
+   * or null. The sidebar shows it in place of Close Out; it never words its own.
+   */
+  closeRefusal: Schema.NullOr(Schema.String),
   /** Eric's last "Done deciding" and how its delivery went. */
   handoff: TrackerHandoffState,
 });
@@ -252,6 +266,13 @@ export const TrackerLinkThreadInput = Schema.Struct({
   expectedThreadId: Schema.NullOr(Schema.String),
 });
 export type TrackerLinkThreadInput = typeof TrackerLinkThreadInput.Type;
+
+/** This conversation leaves the record it owns; the record then has no conversation. */
+export const TrackerUnlinkThreadInput = Schema.Struct({
+  workId: TrackerWorkId,
+  threadId: ThreadId,
+});
+export type TrackerUnlinkThreadInput = typeof TrackerUnlinkThreadInput.Type;
 
 /** What Eric read on a card; the hub write is refused when the card has moved on. */
 export const TrackerCardSeen = Schema.Struct({

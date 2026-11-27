@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, TrackerPortfolio, TrackerWorkDetail } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon } from "lucide-react";
+import { ArrowLeftIcon, LinkIcon, PanelTopOpenIcon, UnlinkIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
@@ -115,6 +115,58 @@ function LinkThisConversation(props: {
   );
 }
 
+/**
+ * The way out of a link: this conversation leaves the record, which then has no
+ * conversation. Without it, moving onto another record was the only way to stop
+ * showing a closed one (datax-v3-map, 2026-11-27).
+ */
+function UnlinkThisConversation(props: {
+  threadRef: ScopedThreadRef;
+  work: TrackerWorkDetail;
+  onUnlinked: () => void;
+}) {
+  const unlink = useAtomCommand(serverEnvironment.trackerUnlinkThread, { reportFailure: false });
+  const canUnlink = useAtomValue(
+    serverEnvironment.trackerUnlinkThread.permissionAtom(props.threadRef.environmentId),
+  );
+  const gt = useGT();
+  const [pending, setPending] = useState(false);
+
+  const submit = async () => {
+    setPending(true);
+    const result = await unlink({
+      environmentId: props.threadRef.environmentId,
+      input: { workId: props.work.id, threadId: props.threadRef.threadId },
+    });
+    setPending(false);
+    if (result._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: gt("Unlinked from {title}", { title: props.work.title }),
+      });
+      props.onUnlinked();
+    } else if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not unlink this conversation"),
+        description: errorText(squashAtomCommandFailure(result)),
+      });
+    }
+  };
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={pending || !canUnlink}
+      onClick={() => void submit()}
+    >
+      <UnlinkIcon />
+      {pending ? <T>Unlinking…</T> : <T>Unlink This Conversation</T>}
+    </Button>
+  );
+}
+
 /** Buttons that ask the agent in this conversation to run a project skill on the linked record. */
 function AgentActions(props: {
   threadRef: ScopedThreadRef;
@@ -135,11 +187,12 @@ function AgentActions(props: {
     }
     const label = resolve(action.label);
     if (action.confirm) {
+      // Names the work item and its goal: Close Out ends the record, not this conversation.
       const approved = await requestConfirmDialog(
-        gt("{action} {title}? The agent runs project-closeout, which closes the record.", {
-          action: label,
-          title: props.work.title,
-        }),
+        gt(
+          "{action} closes the work item {title}, not only this conversation. Its goal: {goal} The agent runs project-closeout, which removes its checkouts and scratch.",
+          { action: label, title: props.work.title, goal: props.work.goal },
+        ),
         { variant: "destructive" },
       );
       if (approved !== true) return;
@@ -188,6 +241,10 @@ function AgentActions(props: {
         <p role="status" className="text-muted-foreground text-xs">
           {refusal}
         </p>
+      ) : null}
+      {props.work.closeRefusal !== null ? (
+        // The hub's own sentence for a standing record, in place of Close Out.
+        <p className="text-muted-foreground text-xs">{props.work.closeRefusal}</p>
       ) : null}
     </section>
   );
@@ -252,8 +309,10 @@ export function TrackerPanel(props: {
   const hubLinkedId = linkedWorkIdForThread(portfolio.value, threadRef.threadId);
   // The hub's link list refreshes on its own timer; hold a fresh link until it agrees.
   const [justLinkedId, setJustLinkedId] = useState<string | null>(null);
+  // Likewise an unlink, until the hub's next poll no longer lists the link.
+  const [justUnlinkedId, setJustUnlinkedId] = useState<string | null>(null);
   const [browsingId, setBrowsingId] = useState<string | null>(null);
-  const linkedId = hubLinkedId ?? justLinkedId;
+  const linkedId = (hubLinkedId === justUnlinkedId ? null : hubLinkedId) ?? justLinkedId;
   const shownId = linkedId ?? browsingId;
   const work = useTrackerWork(environmentId, shownId);
   const error = portfolio.error ?? work.error;
@@ -303,7 +362,20 @@ export function TrackerPanel(props: {
                     <LinkThisConversation
                       threadRef={threadRef}
                       work={work.value}
-                      onLinked={() => setJustLinkedId(shownId)}
+                      onLinked={() => {
+                        setJustUnlinkedId(null);
+                        setJustLinkedId(shownId);
+                      }}
+                    />
+                  ) : work.value.thread?.threadId === threadRef.threadId ? (
+                    <UnlinkThisConversation
+                      threadRef={threadRef}
+                      work={work.value}
+                      onUnlinked={() => {
+                        setJustLinkedId(null);
+                        setJustUnlinkedId(linkedId);
+                        setBrowsingId(null);
+                      }}
                     />
                   ) : null}
                   <Button

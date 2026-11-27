@@ -146,6 +146,8 @@ describe("tracker logic", () => {
 
   it("offers roadmap and handoff only to records with phases, and confirms only Close Out", () => {
     const phased = {
+      status: "active",
+      closeRefusal: null,
       phases: [
         {
           id: "P1",
@@ -168,7 +170,8 @@ describe("tracker logic", () => {
       "wait-what",
       "close-out",
     ]);
-    expect(trackerActions({ phases: [] }).map((action) => action.id)).toEqual([
+    const task = { phases: [], status: "active", closeRefusal: null };
+    expect(trackerActions(task).map((action) => action.id)).toEqual([
       "next-step",
       "grill",
       "prove-it",
@@ -181,6 +184,22 @@ describe("tracker logic", () => {
         .filter((action) => action.confirm)
         .map((action) => action.id),
     ).toEqual(["close-out"]);
+  });
+
+  // standing-work-items, 2026-11-27: Close Out reached datax-v3-map, a record whose close
+  // would have stopped its weekly refresh. A standing or closed record offers none.
+  it("offers Close Out only on a record the hub says can close now", () => {
+    const standing = {
+      phases: [],
+      status: "active",
+      closeRefusal: "datax-v3-map is standing, so it cannot be closed: the weekly refresh runs.",
+    };
+    expect(trackerActions(standing).map((action) => action.id)).not.toContain("close-out");
+    expect(trackerActions(standing).map((action) => action.id)).toContain("next-step");
+    for (const status of ["complete", "archived", "superseded", "dropped"]) {
+      const closed = { phases: [], status, closeRefusal: null };
+      expect(trackerActions(closed).map((action) => action.id)).not.toContain("close-out");
+    }
   });
 
   it("sends actions only from the conversation that owns the record", () => {

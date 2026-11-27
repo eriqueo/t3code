@@ -1,3 +1,4 @@
+import { TRACKER_TERMINAL_STATUSES } from "@t3tools/contracts";
 import type {
   TrackerCard,
   TrackerCardSeen,
@@ -183,14 +184,19 @@ const PROJECT_ONLY = new Set<TrackerActionId>(["tidy", "handoff"]);
 
 /**
  * A record without phases has no roadmap and needs no handoff, so it gets neither
- * button. Phases decide, not the record's kind (tracker K4).
+ * button. Phases decide, not the record's kind (tracker K4). Close Out appears only when
+ * the record can close now: never on a closed record, and never on a standing one (the
+ * hub's `closeRefusal`, which the panel shows instead).
  */
 export function trackerActions(
-  work: Pick<TrackerWorkDetail, "phases">,
+  work: Pick<TrackerWorkDetail, "phases" | "status" | "closeRefusal">,
 ): ReadonlyArray<TrackerAction> {
-  return work.phases.length > 0
-    ? PROJECT_ACTIONS
-    : PROJECT_ACTIONS.filter((action) => !PROJECT_ONLY.has(action.id));
+  const closable = work.closeRefusal === null && !TRACKER_TERMINAL_STATUSES.has(work.status);
+  return PROJECT_ACTIONS.filter(
+    (action) =>
+      (work.phases.length > 0 || !PROJECT_ONLY.has(action.id)) &&
+      (closable || action.id !== "close-out"),
+  );
 }
 
 /**

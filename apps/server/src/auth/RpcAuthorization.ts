@@ -130,6 +130,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.trackerGetWork]: AuthOrchestrationReadScope,
   [WS_METHODS.trackerGetThreadOwner]: AuthOrchestrationReadScope,
   [WS_METHODS.trackerLinkThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.trackerUnlinkThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerStartAgent]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerAnswerCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.trackerDoneDeciding]: AuthOrchestrationOperateScope,
