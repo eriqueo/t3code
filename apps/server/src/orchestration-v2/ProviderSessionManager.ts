@@ -623,6 +623,20 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                const hostToolsAllowed =
+                  Option.isNone(serverSettings) ||
+                  (yield* serverSettings.value.getSettings.pipe(
+                    Effect.map(
+                      (settings) =>
+                        settings.providerInstances[providerInstanceId]?.hostTools !== "disabled",
+                    ),
+                    Effect.orElseSucceed(() => false),
+                  ));
+                if (!hostToolsAllowed) {
+                  yield* mcpSessionRegistry.revokeThread(threadId);
+                  yield* mcpSessions.clear(threadId);
+                  return { mcpCredentialId: undefined, issued: false };
+                }
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
