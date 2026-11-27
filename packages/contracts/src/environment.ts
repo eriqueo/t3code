@@ -88,6 +88,8 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
+  /** Provider instances can disable host tools and isolate Codex processes per thread. */
+  restrictedInvestigationProviders: Schema.optionalKey(Schema.Boolean),
   /** A DPoP session from a pairing link renews at /oauth/token; pair with a bearer where absent. */
   accessTokenRenewal: Schema.optionalKey(Schema.Boolean),
   attachmentUploads: Schema.optionalKey(Schema.Boolean),

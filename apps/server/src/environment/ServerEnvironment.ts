@@ -222,6 +222,7 @@ export const make = Effect.gen(function* () {
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
+      restrictedInvestigationProviders: true,
       attachmentUploads: true,
       accessTokenRenewal: true,
       questionAttachments: true,
