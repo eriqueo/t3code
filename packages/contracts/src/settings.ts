@@ -731,6 +731,13 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    isolateThreadProcesses: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Separate process for each thread",
+        description:
+          "Launch Codex in each thread's workspace so its executable can apply workspace-specific permissions.",
+      }),
+    ),
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),

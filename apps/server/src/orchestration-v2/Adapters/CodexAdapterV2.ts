@@ -1799,6 +1799,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly extendEnv?: boolean | undefined;
   readonly threadId?: string | undefined;
+  readonly shared?: boolean;
 }) {
   const launch = yield* (yield* AgentScope).wrap({
     command: input.command,
@@ -1806,7 +1807,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     name: "codex",
     threadId: input.threadId,
     env: input.env,
-    shared: true,
+    shared: input.shared ?? true,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
@@ -1998,6 +1999,9 @@ export const layerAppServerClientFactory: Layer.Layer<
           ),
           env: environment,
           threadId: input.threadId,
+          ...(input.settings.isolateThreadProcesses === true
+            ? { shared: false, cwd: input.runtimePolicy.cwd ?? undefined }
+            : {}),
         }).pipe(Effect.provideService(AgentScope, agentScope));
         const handle = yield* spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -2128,7 +2132,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  const capabilities = adapterOptions.capabilities ?? CodexProviderCapabilitiesV2;
+  const defaults = adapterOptions.capabilities ?? CodexProviderCapabilitiesV2;
+  const capabilities =
+    adapterOptions.settings.isolateThreadProcesses === true
+      ? {
+          ...defaults,
+          sessions: { ...defaults.sessions, supportsMultipleProviderThreadsPerSession: false },
+        }
+      : defaults;
   // The elicitation handler shows T3 Code's own requests and passes on the person's answer to each.
   if (capabilities.tools.supportsMcpTools)
     yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
